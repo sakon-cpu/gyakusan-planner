@@ -1471,7 +1471,8 @@ const PAPERS={
 };
 const RECPAPER={'3month':'a4l','1month':'a4p','2week':'a4p','1week':'a4p','1day':'a4p'};
 const GRANLABEL={'3month':'3ヶ月','1month':'1ヶ月','2week':'2週間','1week':'1週間','1day':'1日'};
-function paperPx(paper){const p=PAPERS[paper],m=8;return {availW:(p.w-2*m)*MM, availH:(p.h-2*m)*MM};}
+const PMARGIN=5; // mm。印刷余白は最小限（多くのプリンタの非印字領域を考慮した安全最小値）
+function paperPx(paper){const p=PAPERS[paper],m=PMARGIN;return {availW:(p.w-2*m)*MM, availH:(p.h-2*m)*MM};}
 function includedProjects(){const ids=activeFilterProjects();return state.projects.filter(p=>ids.includes(p.id));}
 function defaultPrintTitle(){
   const ps=includedProjects();
@@ -1532,7 +1533,9 @@ function renderPrintPreview(paper,fit,title){
   const {availW,availH,natH,s}=computeFit(paper,fit);
   const clone=$('#printScale').cloneNode(true);
   clone.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));
-  clone.style.width=availW+'px';clone.style.transform=`scale(${s})`;clone.style.transformOrigin='top left';
+  const tx=Math.max(0,(availW-availW*s)/2), ty=Math.max(0,(availH-natH*s)/2);
+  clone.style.width=availW+'px';clone.style.transformOrigin='top left';
+  clone.style.transform=`translate(${tx}px,${ty}px) scale(${s})`;
   const ph=clone.querySelector('.printhead');if(ph)ph.style.display='flex';
   const disp=Math.min(680/availW, 460/availH);
   const frame=$('#previewFrame');frame.style.width=(availW*disp)+'px';frame.style.height=(availH*disp)+'px';
@@ -1546,19 +1549,20 @@ function renderPrintPreview(paper,fit,title){
 function rec_gran(){return RECPAPER[state.ui.gran];}
 function doPrint(paper,fit,title){
   setPrintHeader(title);
-  const p=PAPERS[paper];const margin=8;
+  const p=PAPERS[paper];const margin=PMARGIN;
   let st=$('#printPageStyle');if(!st){st=document.createElement('style');st.id='printPageStyle';document.head.appendChild(st);}
   st.textContent=`@page{size:${p.w}mm ${p.h}mm;margin:${margin}mm}`;
   const scaleEl=$('#printScale'),wrap=$('#calWrap'),head=scaleEl.querySelector('.printhead');
-  scaleEl.style.transform='';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';head.style.display='';
+  scaleEl.style.transform='';scaleEl.style.transformOrigin='top left';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';head.style.display='';
   // computeFit uses measureNatH which counts the (print-visible) header, so screen==print height
   const {availW,availH,natH,s}=computeFit(paper,fit);
   if(fit){
     scaleEl.style.width=availW+'px';
     head.style.display='flex'; // header is shown in print; keep it counted here too
     void scaleEl.offsetHeight;
-    scaleEl.style.transform=`scale(${s})`;
-    wrap.style.height=Math.ceil(natH*s)+'px';wrap.style.overflow='hidden';
+    const tx=Math.max(0,(availW-availW*s)/2), ty=Math.max(0,(availH-natH*s)/2); // center on the page
+    scaleEl.style.transform=`translate(${tx}px,${ty}px) scale(${s})`;
+    wrap.style.height=Math.floor(availH)+'px';wrap.style.overflow='hidden'; // full printable height → one page, content centered
   }
   const done=()=>{scaleEl.style.transform='';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';head.style.display='';window.removeEventListener('afterprint',done);};
   window.addEventListener('afterprint',done);
