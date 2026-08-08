@@ -799,7 +799,6 @@ function taskRow(t){
   const done=t.status==='done';
   const row=document.createElement('div');row.className='trow'+(done?' done':'');
   const sc=t.subtasks.length?`${t.subtasks.filter(s=>s.done).length}/${t.subtasks.length} サブ`:'';
-  const commN=t.comms.filter(c=>!c.done).length;
   row.innerHTML=`<div class="chk ${done?'done':''}">${done?'✓':''}</div>
     <div class="body"><div class="nm">${esc(t.name)}</div>
     <div class="sub">
@@ -808,7 +807,6 @@ function taskRow(t){
       <span class="pill ${t.priority}">${{hi:'優先度 高',mid:'中',lo:'低'}[t.priority]}</span>
       <span>${minToHM(t.estMin)}</span>
       ${sc?`<span class="subprog">☑ ${sc}</span>`:''}
-      ${commN?`<span class="subprog">💬 ${commN}</span>`:''}
     </div></div>`;
   row.querySelector('.chk').onclick=e=>{e.stopPropagation();t.status=done?'todo':'done';save();generateSchedule();renderProject();renderNav();if(current==='inbox')renderInbox();};
   row.onclick=()=>openTask(t.id);
@@ -861,16 +859,6 @@ function openTask(id,forceProject){
       </div>
       <div class="field"><label>サブタスク</label><div class="subtasks" id="tSubs"></div>
         <div class="addline"><input type="text" id="subNew" placeholder="サブタスクを追加してEnter"></div></div>
-      <div class="field"><label>報告 / 連絡 / 相談 / 決裁</label>
-        <div class="commtabs" id="commTabs">
-          <button class="t report on" data-v="report">報告</button>
-          <button class="t contact" data-v="contact">連絡</button>
-          <button class="t consult" data-v="consult">相談</button>
-          <button class="t decide" data-v="decide">決裁</button>
-        </div>
-        <div id="commList"></div>
-        <div class="addline"><input type="text" id="commNew" placeholder="内容を入力してEnter（上のタブで種類を選択）"></div>
-      </div>
       <div class="field"><label>メモ</label><textarea id="tNotes" placeholder="自由記述">${esc(t.notes)}</textarea></div>
     </div>
     <div class="mf">
@@ -878,7 +866,6 @@ function openTask(id,forceProject){
       <div style="display:flex;gap:8px"><button class="btn" id="tCancel">キャンセル</button><button class="btn pri" id="tSave">保存</button></div>
     </div>`,'wide');
 
-  let commType='report';
   const draft=JSON.parse(JSON.stringify(t));
   const renderSubs=()=>{
     const host=$('#tSubs');host.innerHTML='';
@@ -891,22 +878,8 @@ function openTask(id,forceProject){
       host.appendChild(el);
     });
   };
-  const renderComms=()=>{
-    const host=$('#commList');host.innerHTML='';
-    draft.comms.forEach((c,i)=>{
-      const el=document.createElement('div');el.className='comm'+(c.done?' done':'');
-      const lbl={report:'報告',contact:'連絡',consult:'相談',decide:'決裁'}[c.type];
-      el.innerHTML=`<span class="tag ${c.type}">${lbl}</span><div class="ctxt">${esc(c.text)}</div>
-        <button class="btn ghost sm" data-a="done">${c.done?'戻す':'済'}</button><button class="btn ghost sm" data-a="del">✕</button>`;
-      el.querySelector('[data-a=done]').onclick=()=>{c.done=!c.done;renderComms();};
-      el.querySelector('[data-a=del]').onclick=()=>{draft.comms.splice(i,1);renderComms();};
-      host.appendChild(el);
-    });
-  };
-  renderSubs();renderComms();
+  renderSubs();
   $('#subNew').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.value.trim()){draft.subtasks.push({id:uid(),text:e.target.value.trim(),done:false});e.target.value='';renderSubs();}});
-  $('#commNew').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.value.trim()){draft.comms.push({id:uid(),type:commType,text:e.target.value.trim(),done:false});e.target.value='';renderComms();}});
-  $$('#commTabs .t').forEach(b=>b.onclick=()=>{commType=b.dataset.v;$$('#commTabs .t').forEach(x=>x.classList.remove('on'));b.classList.add('on');});
   segBind('#tSide',v=>draft.side=v);segBind('#tPri',v=>draft.priority=v);segBind('#tStat',v=>draft.status=v);
   $('#mClose').onclick=$('#tCancel').onclick=closeModal;
   $('#tDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('このタスクを削除しますか？')){state.tasks=state.tasks.filter(x=>x.id!==t.id);save();closeModal();afterTaskChange();}};
