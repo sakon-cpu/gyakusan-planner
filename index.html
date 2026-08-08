@@ -240,6 +240,10 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .months.g-3month .calcard .lbl{font-size:9.5px;line-height:1.1}
 .months.g-3month .calcard .sm{font-size:8.5px;line-height:1.05}
 .months.g-1month .calcard .lbl{font-size:11px;line-height:1.15}
+/* dense 3-month: keep the date gutter to a single clean line (holiday still shown by red number) */
+.months.g-3month .dayrow .holname{display:none}
+.dayrow .gut{overflow:hidden;flex-wrap:nowrap}
+.dayrow .dtop{white-space:nowrap}
 .calcard .cardtip{font-size:9px;font-weight:600;opacity:.85}
 
 .emptycal{padding:40px;text-align:center;color:var(--sub)}
@@ -1068,7 +1072,7 @@ function renderCalendar(){
       if(hol)cls.push('hol');
       if(ds===todayISO())cls.push('today');
       rows+=`<div class="${cls.join(' ')}" data-date="${ds}" style="height:${H}px">
-        <div class="gut"><div class="dtop"><span class="dnum">${d.getDate()}</span><span class="dwk">${WK[wd]}</span>${(dlByDate[ds]||[]).slice(0,3).map(x=>`<span class="dldot" style="background:${x.color}" title="締切: ${esc(x.name)}"></span>`).join('')}</div>${hol?`<span class="holname">${esc(hol)}</span>`:''}${(GBUSY[ds]&&GBUSY[ds].length)?`<span class="gchip" title="Google予定${GBUSY[ds].length}件">G${GBUSY[ds].length}</span>`:''}</div>
+        <div class="gut"><div class="dtop"><span class="dnum">${d.getDate()}</span><span class="dwk">${WK[wd]}</span>${(dlByDate[ds]||[]).slice(0,3).map(x=>`<span class="dldot" style="background:${x.color}" title="締切: ${esc(x.name)}"></span>`).join('')}</div>${hol?`<span class="holname">${esc(hol)}</span>`:''}</div>
         <div class="lanecells">${lanes.map(l=>`<div class="lc" data-lane="${l.id}" data-date="${ds}"></div>`).join('')}</div>
       </div>`;
     });
