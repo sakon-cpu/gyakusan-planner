@@ -201,6 +201,9 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dayrow .dtop{display:flex;align-items:baseline;gap:4px;line-height:1}
 .dayrow .dnum{font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
 .dayrow .dwk{font-size:10px;color:var(--sub)}
+.dayrow .dldot{width:6px;height:6px;border-radius:50%;display:inline-block;box-shadow:0 0 0 1.5px #fff;vertical-align:middle}
+.nowline{position:absolute;left:46px;right:0;height:0;border-top:2px solid var(--danger);z-index:6;pointer-events:none}
+.nowline::before{content:'';position:absolute;left:-4px;top:-4px;width:7px;height:7px;border-radius:50%;background:var(--danger)}
 .dayrow .holname{font-size:8.5px;color:var(--danger);line-height:1.05;margin-top:1px;max-width:42px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .dayrow .lanecells{flex:1 1 0;display:flex}
 .dayrow .lc{flex:1 1 0;border-right:1px dashed #eef0f4;min-height:100%}
@@ -626,7 +629,8 @@ function freeIntervals(ds){
   return free.filter(f=>f[1]-f[0]>=15);
 }
 function generateSchedule(daysAhead=28){
-  state.blocks=(state.blocks||[]).filter(b=>b.confirmed); // keep confirmed, rebuild tentative
+  // keep confirmed blocks only for tasks that still exist and aren't done; rebuild tentative
+  state.blocks=(state.blocks||[]).filter(b=>b.confirmed&&state.tasks.some(t=>t.id===b.taskId&&t.status!=='done'));
   const tasks=activeTasks().filter(t=>remainingMin(t)>0).sort((a,b)=>{
     const ad=a.deadline||'9999-12-31',bd=b.deadline||'9999-12-31';
     return ad.localeCompare(bd)||scoreTask(b)-scoreTask(a);
@@ -806,7 +810,7 @@ function taskRow(t){
       ${sc?`<span class="subprog">☑ ${sc}</span>`:''}
       ${commN?`<span class="subprog">💬 ${commN}</span>`:''}
     </div></div>`;
-  row.querySelector('.chk').onclick=e=>{e.stopPropagation();t.status=done?'todo':'done';save();renderProject();renderNav();};
+  row.querySelector('.chk').onclick=e=>{e.stopPropagation();t.status=done?'todo':'done';save();generateSchedule();renderProject();renderNav();if(current==='inbox')renderInbox();};
   row.onclick=()=>openTask(t.id);
   return row;
 }
@@ -918,7 +922,7 @@ function openTask(id,forceProject){
   };
 }
 function segBind(sel,cb){$$(sel+' button').forEach(b=>b.onclick=()=>{$$(sel+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.v);});}
-function afterTaskChange(){renderNav();if(current==='today')renderToday();if(current==='project')renderProject();if(current==='inbox')renderInbox();if(current==='calendar')renderCalendar();}
+function afterTaskChange(){generateSchedule();renderNav();if(current==='today')renderToday();if(current==='project')renderProject();if(current==='inbox')renderInbox();if(current==='calendar')renderCalendar();}
 
 /* ---------- PROJECT settings modal ---------- */
 function editProject(id){
@@ -940,7 +944,7 @@ function editProject(id){
   PALETTE.forEach(c=>{const s=document.createElement('div');s.className='sw'+(c===d.color?' on':'');s.style.background=c;s.onclick=()=>{d.color=c;$$('#pColor .sw').forEach(x=>x.classList.remove('on'));s.classList.add('on');};cp.appendChild(s);});
   segBind('#pSelf',v=>d.selfContained=(v==='yes'));
   $('#mClose').onclick=$('#pCancel').onclick=closeModal;
-  $('#pDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('プロジェクトを削除しますか？（タスク・カードも削除されます）')){state.projects=state.projects.filter(x=>x.id!==id);state.tasks=state.tasks.filter(t=>t.projectId!==id);state.cards=state.cards.filter(c=>c.projectId!==id);save();closeModal();renderNav();switchView('today');}};
+  $('#pDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('プロジェクトを削除しますか？（タスク・カードも削除されます）')){state.projects=state.projects.filter(x=>x.id!==id);state.tasks=state.tasks.filter(t=>t.projectId!==id);state.cards=state.cards.filter(c=>c.projectId!==id);generateSchedule();save();closeModal();renderNav();switchView('today');}};
   $('#pSave').onclick=()=>{d.name=$('#pName').value.trim()||'（無題）';d.deadline=$('#pDead').value||'';
     if(isNew)state.projects.push(d);else{const i=state.projects.findIndex(x=>x.id===id);state.projects[i]=d;}
     save();closeModal();renderNav();if(isNew)openProject(d.id);else renderProject();toast('保存しました');};
@@ -1009,6 +1013,11 @@ function renderCalendar(){
   const lanes=visibleLanes();
   const H=rowHeight();
   const allowed=activeFilterProjects();
+  // task deadlines by date (for calendar markers)
+  const dlByDate={};
+  state.tasks.filter(t=>t.status!=='done'&&t.deadline&&t.projectId&&allowed.includes(t.projectId)).forEach(t=>{
+    (dlByDate[t.deadline]=dlByDate[t.deadline]||[]).push({color:projColor(t.projectId),name:t.name});
+  });
   cols.forEach(col=>{
     const mc=document.createElement('div');mc.className='monthcol';
     let laneHdr=`<div class="lanehdr"><div class="gut"></div>`+lanes.map(l=>`<div class="lh ${l.kind==='client'?'client':''}">${esc(l.name)}${l.kind==='client'?' <span style="font-size:9px;opacity:.7">〔破線枠〕</span>':''}</div>`).join('')+`</div>`;
@@ -1021,7 +1030,7 @@ function renderCalendar(){
       if(hol)cls.push('hol');
       if(ds===todayISO())cls.push('today');
       rows+=`<div class="${cls.join(' ')}" data-date="${ds}" style="height:${H}px">
-        <div class="gut"><div class="dtop"><span class="dnum">${d.getDate()}</span><span class="dwk">${WK[wd]}</span></div>${hol?`<span class="holname">${esc(hol)}</span>`:''}${(GBUSY[ds]&&GBUSY[ds].length)?`<span class="gchip" title="Google予定${GBUSY[ds].length}件">G${GBUSY[ds].length}</span>`:''}</div>
+        <div class="gut"><div class="dtop"><span class="dnum">${d.getDate()}</span><span class="dwk">${WK[wd]}</span>${(dlByDate[ds]||[]).slice(0,3).map(x=>`<span class="dldot" style="background:${x.color}" title="締切: ${esc(x.name)}"></span>`).join('')}</div>${hol?`<span class="holname">${esc(hol)}</span>`:''}${(GBUSY[ds]&&GBUSY[ds].length)?`<span class="gchip" title="Google予定${GBUSY[ds].length}件">G${GBUSY[ds].length}</span>`:''}</div>
         <div class="lanecells">${lanes.map(l=>`<div class="lc" data-lane="${l.id}" data-date="${ds}"></div>`).join('')}</div>
       </div>`;
     });
@@ -1037,22 +1046,23 @@ function renderCalendar(){
     lanes.forEach((ln,li)=>{
       const laneCards=state.cards.filter(c=>c.laneId===ln.id&&allowed.includes(c.projectId)&&!(c.end<start||c.start>end))
         .sort((a,b)=>a.start.localeCompare(b.start)||b.end.localeCompare(a.end));
-      // greedy sub-column assignment
-      const colEnds=[]; // last end date per subcol
+      // greedy sub-column assignment (local map; never mutate/persist card objects)
+      const colEnds=[]; const subOf={};
       laneCards.forEach(c=>{
         let sub=colEnds.findIndex(e=>e<c.start);
         if(sub<0){sub=colEnds.length;colEnds.push(c.end);}else{colEnds[sub]=c.end;}
-        c.__sub=sub;
+        subOf[c.id]=sub;
       });
       const K=Math.max(1,colEnds.length);
       laneCards.forEach(card=>{
+        const cardSub=subOf[card.id];
         const s=Math.max(0,daysBetween(start,card.start));
         const e=Math.min(col.days.length-1,daysBetween(start,card.end));
         const top=s*H, height=(e-s+1)*H-3;
         const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self');
         el.style.top=(top+1)+'px';
         el.style.height=Math.max(15,height)+'px';
-        el.style.left=`calc(46px + (100% - 46px) * ${(li+card.__sub/K)/L} + 2px)`;
+        el.style.left=`calc(46px + (100% - 46px) * ${(li+cardSub/K)/L} + 2px)`;
         el.style.width=`calc((100% - 46px) * ${1/(L*K)} - 4px)`;
         el.style.background=projColor(card.projectId);
         el.innerHTML=`<div class="rz t"><i></i></div><div class="lbl">${esc(card.label)}</div>
@@ -1077,6 +1087,11 @@ function renderDayView(host,col){
     <div class="daygrid" style="height:${(eh-sh+1)*H}px;position:relative">${rows}<div class="cardlayer" id="dayLayer"></div></div>`;
   host.appendChild(wrap);
   const layer=wrap.querySelector('#dayLayer');
+  // current-time line (only when viewing today)
+  if(ds===todayISO()){
+    const now=new Date();const nowM=now.getHours()*60+now.getMinutes();
+    if(nowM>=sh*60&&nowM<=eh*60){const y=((nowM/60)-sh)*H;const nl=document.createElement('div');nl.className='nowline';nl.style.top=(y)+'px';nl.title='現在時刻';layer.appendChild(nl);}
+  }
   // Google events (read-only) on the left half
   (GBUSY[ds]||[]).forEach(iv=>{
     const top=((iv.start/60)-sh)*H; const height=Math.max(16,((iv.end-iv.start)/60)*H-2);
@@ -1296,7 +1311,7 @@ async function gConnect(interactive=true){
       },
       error_callback:(e)=>{toast('認証がキャンセル/失敗しました');resolve(false);}
     });
-    GTOKENCLIENT.requestAccessToken({prompt:interactive?'consent':''});
+    GTOKENCLIENT.requestAccessToken({prompt:''});
   });
 }
 async function gApi(url,opts={}){
