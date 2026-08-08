@@ -356,6 +356,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
         <div><h1>CALENDAR</h1><div class="date">全プロジェクト横断スケジュール</div></div>
         <div class="tools">
           <button class="btn" id="btnAddCard">＋ 予定カード</button>
+          <button class="btn" id="btnShift">⇄ 全体をずらす</button>
           <button class="btn" id="btnPrint">🖶 PDF / 印刷</button>
         </div>
       </div>
@@ -530,7 +531,37 @@ function holidayName(isoStr){
 /* ---------------- State ---------------- */
 let state=null;
 const KEY='gyakusan_v1';
-function save(){localStorage.setItem(KEY,JSON.stringify(state));}
+/* ---- history (undo/redo, up to 10) ---- */
+const HIST={past:[],future:[]};
+let _lastSerialized=null,_histBase=null,_histTimer=null;
+const HIST_MAX=10;
+function save(){
+  localStorage.setItem(KEY,JSON.stringify(state));
+  // coalesce a burst of saves (e.g. edit + auto re-plan) into a single undo step
+  if(_histBase==null)_histBase=_lastSerialized;
+  clearTimeout(_histTimer);
+  _histTimer=setTimeout(()=>{
+    const cur=JSON.stringify(state);
+    if(_histBase!=null&&_histBase!==cur){HIST.past.push(_histBase);if(HIST.past.length>HIST_MAX)HIST.past.shift();HIST.future=[];}
+    _lastSerialized=cur;_histBase=null;
+  },320);
+}
+function snapshotInit(){clearTimeout(_histTimer);_histBase=null;_lastSerialized=JSON.stringify(state);HIST.past.length=0;HIST.future.length=0;}
+function rerenderAll(){closeModal();renderNav();switchView(current);}
+function undo(){
+  clearTimeout(_histTimer);_histBase=null;
+  if(!HIST.past.length){toast('これ以上戻せません');return;}
+  HIST.future.push(JSON.stringify(state));if(HIST.future.length>HIST_MAX)HIST.future.shift();
+  const prev=HIST.past.pop();state=JSON.parse(prev);_lastSerialized=prev;localStorage.setItem(KEY,prev);
+  rerenderAll();toast('元に戻しました');
+}
+function redo(){
+  clearTimeout(_histTimer);_histBase=null;
+  if(!HIST.future.length){toast('やり直す操作がありません');return;}
+  HIST.past.push(JSON.stringify(state));if(HIST.past.length>HIST_MAX)HIST.past.shift();
+  const nxt=HIST.future.pop();state=JSON.parse(nxt);_lastSerialized=nxt;localStorage.setItem(KEY,nxt);
+  rerenderAll();toast('やり直しました');
+}
 function load(){
   const raw=localStorage.getItem(KEY);
   if(raw){try{state=JSON.parse(raw);migrate();return;}catch(e){}}
@@ -1547,6 +1578,45 @@ function renderPrintPreview(paper,fit,title){
           (overflow?'原寸のため複数ページに分割されます':'原寸で1ページに収まります'));
 }
 function rec_gran(){return RECPAPER[state.ui.gran];}
+
+/* ---- shift entire schedule by N days ---- */
+function openShiftModal(){
+  let dir='back', scope='all', shiftDeadlines=true, shiftBlocks=false;
+  openModal(`
+    <div class="mh"><h3>全体をずらす</h3><button class="btn ghost" id="mClose">✕</button></div>
+    <div class="mb">
+      <div style="color:var(--sub);font-size:13px;margin-bottom:14px">各カードの必要日数（長さ）は変えずに、予定全体をまとめて前後に移動します。納品が延びた／前倒しになったときに便利です。</div>
+      <div class="field row">
+        <div><label>ずらす日数</label><input type="number" id="sfDays" value="7" min="1" step="1"></div>
+        <div><label>方向</label><div class="seg" id="sfDir"><button data-v="back" class="on">後ろへ（遅らせる）</button><button data-v="fwd">前へ（早める）</button></div></div>
+      </div>
+      <div class="field"><label>対象</label>
+        <div class="seg" id="sfScope"><button data-v="all" class="on">全プロジェクト</button><button data-v="filter">表示中のプロジェクトのみ</button></div></div>
+      <div class="field"><label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="sfDead" checked style="margin-right:6px">タスクの締切・プロジェクト最終締切も一緒にずらす</label></div>
+      <div class="field"><label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="sfBlk" style="margin-right:6px">確定済みの作業予定もずらす（未確定の仮組みは自動で再計算されます）</label></div>
+      <div id="sfPreview" style="color:var(--sub);font-size:12px"></div>
+    </div>
+    <div class="mf"><span></span><div style="display:flex;gap:8px"><button class="btn" id="sfCancel">キャンセル</button><button class="btn pri" id="sfGo">この内容でずらす</button></div></div>`);
+  segBind('#sfDir',v=>{dir=v;upd();});segBind('#sfScope',v=>{scope=v;upd();});
+  $('#sfDays').oninput=upd;$('#sfDead').onchange=e=>{shiftDeadlines=e.target.checked;};$('#sfBlk').onchange=e=>{shiftBlocks=e.target.checked;};
+  function signedDays(){const n=Math.abs(parseInt($('#sfDays').value||'0',10));return dir==='back'?n:-n;}
+  function upd(){const n=signedDays();$('#sfPreview').textContent=n?`→ 全体が ${Math.abs(n)}日 ${n>0?'後ろ':'前'} に移動します`:'';}
+  upd();
+  $('#mClose').onclick=$('#sfCancel').onclick=closeModal;
+  $('#sfGo').onclick=()=>{
+    const n=signedDays();if(!n){toast('日数を入力してください');return;}
+    const ids=scope==='filter'?activeFilterProjects():state.projects.map(p=>p.id);
+    const shift=isoDate=>iso(addDays(parseISO(isoDate),n));
+    state.cards.forEach(c=>{if(ids.includes(c.projectId)){c.start=shift(c.start);c.end=shift(c.end);}});
+    if(shiftDeadlines){
+      state.tasks.forEach(t=>{if(t.deadline&&ids.includes(t.projectId))t.deadline=shift(t.deadline);});
+      state.projects.forEach(p=>{if(ids.includes(p.id)&&p.deadline)p.deadline=shift(p.deadline);});
+    }
+    if(shiftBlocks){state.blocks.forEach(b=>{const t=state.tasks.find(x=>x.id===b.taskId);if(b.confirmed&&t&&ids.includes(t.projectId))b.date=shift(b.date);});}
+    generateSchedule();save();closeModal();renderNav();renderCalendar();
+    toast(`全体を ${Math.abs(n)}日 ${n>0?'後ろ':'前'} にずらしました（Cmd+Zで取り消し可）`);
+  };
+}
 function doPrint(paper,fit,title){
   setPrintHeader(title);
   const p=PAPERS[paper];const margin=PMARGIN;
@@ -1580,6 +1650,7 @@ function wire(){
   $('#btnReplan').onclick=()=>{generateSchedule();renderToday();if(current==='calendar')renderCalendar();toast('締切から逆算して仮組みしました');};
   $('#btnInboxAdd').onclick=()=>openTask(null);
   $('#btnAddCard').onclick=()=>editCard(null);
+  $('#btnShift').onclick=openShiftModal;
   $('#btnPrint').onclick=openPrintModal;
   $('#calPrev').onclick=()=>calStep(-1);
   $('#calNext').onclick=()=>calStep(1);
@@ -1602,12 +1673,23 @@ function wire(){
   $('#btnImport').onclick=()=>$('#importFile').click();
   $('#importFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{state=JSON.parse(r.result);save();toast('インポートしました');renderNav();switchView('today');}catch(err){toast('読み込みに失敗しました');}};r.readAsText(f);};
   $('#btnReset').onclick=()=>{if(confirm('全データを初期状態に戻します。よろしいですか？')){state=seed();save();renderNav();switchView('today');}};
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){closeModal();return;}
+    // Undo / Redo (skip when typing in a field so native text-undo still works)
+    const t=e.target,tag=t&&t.tagName;
+    const inField=tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(t&&t.isContentEditable);
+    if((e.metaKey||e.ctrlKey)&&!inField){
+      const k=e.key.toLowerCase();
+      if(k==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();}
+      else if(k==='y'){e.preventDefault();redo();}
+    }
+  });
 }
 
 /* ---------------- boot ---------------- */
 load();
 ensureSchedule();
+snapshotInit();
 wire();
 renderNav();
 switchView('today');
