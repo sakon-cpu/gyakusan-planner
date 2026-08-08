@@ -222,15 +222,16 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .gcal-dot.on{background:var(--good)}
 
 .cardlayer{position:absolute;inset:0;pointer-events:none}
-.calcard{position:absolute;border-radius:8px;padding:5px 8px;color:#fff;font-size:11.5px;font-weight:700;
+.calcard{position:absolute;border-radius:8px;padding:3px 7px;color:#fff;font-size:11.5px;font-weight:700;
   box-shadow:0 2px 6px rgba(20,25,40,.18);overflow:hidden;pointer-events:auto;cursor:grab;
-  display:flex;flex-direction:column;gap:2px;border:1px solid rgba(255,255,255,.35)}
-.calcard .lbl{line-height:1.25;overflow:hidden}
+  display:flex;flex-direction:column;gap:1px;justify-content:flex-start;border:1px solid rgba(255,255,255,.35)}
+.calcard .lbl{line-height:1.18;overflow:hidden}
 .calcard .sm{font-size:10px;font-weight:600;opacity:.92;line-height:1.2;white-space:pre-wrap}
 .calcard.tent{opacity:.9;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.18) 0 6px,transparent 6px 12px)}
-.calcard .rz{position:absolute;left:0;right:0;height:8px;cursor:ns-resize;display:flex;align-items:center;justify-content:center}
+.calcard .rz{position:absolute;left:0;right:0;height:7px;cursor:ns-resize;display:flex;align-items:center;justify-content:center;z-index:2}
 .calcard .rz.t{top:-1px}.calcard .rz.b{bottom:-1px}
-.calcard .rz i{width:26px;height:3px;border-radius:3px;background:rgba(255,255,255,.7)}
+.calcard .rz i{width:24px;height:3px;border-radius:3px;background:rgba(255,255,255,.85);opacity:0;transition:opacity .12s}
+.calcard:hover .rz i{opacity:1}
 .calcard.dragging{opacity:.85;z-index:50;cursor:grabbing;box-shadow:0 10px 26px rgba(10,15,30,.35);transform:scale(1.02)}
 .calcard.dim{opacity:.18}
 .calcard .cardtip{font-size:9px;font-weight:600;opacity:.85}
@@ -1042,7 +1043,7 @@ function renderCalendar(){
         const top=s*H, height=(e-s+1)*H-3;
         const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self');
         el.style.top=(top+1)+'px';
-        el.style.height=Math.max(15,height)+'px';
+        el.style.height=Math.max(20,height)+'px';
         el.style.left=`calc(46px + (100% - 46px) * ${(li+cardSub/K)/L} + 2px)`;
         el.style.width=`calc((100% - 46px) * ${1/(L*K)} - 4px)`;
         el.style.background=projColor(card.projectId);
