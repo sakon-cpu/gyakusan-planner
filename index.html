@@ -235,6 +235,11 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .calcard:hover .rz i{opacity:1}
 .calcard.dragging{opacity:.85;z-index:50;cursor:grabbing;box-shadow:0 10px 26px rgba(10,15,30,.35);transform:scale(1.02)}
 .calcard.dim{opacity:.18}
+/* dense views: shrink label so short (single-day) cards never clip text */
+.months.g-3month .calcard{padding:2px 5px}
+.months.g-3month .calcard .lbl{font-size:9.5px;line-height:1.1}
+.months.g-3month .calcard .sm{font-size:8.5px;line-height:1.05}
+.months.g-1month .calcard .lbl{font-size:11px;line-height:1.15}
 .calcard .cardtip{font-size:9px;font-weight:600;opacity:.85}
 
 .emptycal{padding:40px;text-align:center;color:var(--sub)}
@@ -274,8 +279,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
   .printhead{display:flex!important}
   /* scale-to-fit wrapper set by JS */
   #printScale{transform-origin:top left}
-  .monthcol .mhead{font-size:14px}
-  .lanehdr .lh{font-size:12px}
+  /* NOTE: mhead/lanehdr のフォントは画面と同じに保つ（印刷時の高さズレ＝下端切れを防ぐため） */
   .dayrow .dnum{font-size:13px}
   .dayrow .dwk{font-size:11px}
   .calcard .lbl{font-size:12px}
@@ -284,9 +288,26 @@ input,select,textarea{font-family:inherit;font-size:14px}
   .monthcol{border:1px solid #cfd3dc}
   .gchip{display:none!important}
 }
-.printhead{display:none;justify-content:space-between;align-items:baseline;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #333}
+.printhead{display:none;justify-content:space-between;align-items:flex-end;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #333}
+.printhead .ph-left{display:flex;flex-direction:column;gap:4px}
 .printhead h2{margin:0;font-size:16px}
-.printhead .pr{color:#555;font-size:12px}
+.printhead .pr{color:#555;font-size:12px;white-space:nowrap}
+.printlegend{display:flex;flex-wrap:wrap;gap:10px}
+.printlegend .lg{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#333;font-weight:700}
+.printlegend .lg i{width:11px;height:11px;border-radius:3px;display:inline-block}
+@media print{.printlegend .lg i{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+
+/* print preview inside modal */
+.pp-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.paperbtns{display:flex;gap:6px;flex-wrap:wrap}
+.paperbtn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 11px;font-size:12.5px;font-weight:700;color:var(--sub);position:relative}
+.paperbtn.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.paperbtn .rec{position:absolute;top:-8px;right:-6px;background:var(--good);color:#fff;font-size:9px;font-weight:800;padding:1px 5px;border-radius:8px}
+.previewwrap{background:#e9ebf0;border-radius:10px;padding:16px;display:flex;justify-content:center;max-height:56vh;overflow:auto}
+.previewframe{position:relative;background:#fff;box-shadow:0 6px 20px rgba(10,15,30,.22)}
+#previewPage{position:absolute;top:0;left:0;transform-origin:top left;overflow:hidden;background:#fff}
+.previewhint{font-size:12px;color:var(--sub);margin-top:8px}
+.previewhint b{color:var(--ink)}
 </style>
 </head>
 <body>
@@ -355,7 +376,10 @@ input,select,textarea{font-family:inherit;font-size:14px}
       </div>
       <div class="calwrap" id="calWrap">
         <div id="printScale">
-          <div class="printhead"><h2 id="printTitle"></h2><span class="pr" id="printSub"></span></div>
+          <div class="printhead">
+            <div class="ph-left"><h2 id="printTitle"></h2><div class="printlegend" id="printLegend"></div></div>
+            <span class="pr" id="printSub"></span>
+          </div>
           <div class="months" id="calMonths"></div>
         </div>
       </div>
@@ -990,7 +1014,7 @@ function renderCalendar(){
   const cols=granColumns();
   const label=state.ui.gran==='3month'?`${cols[0].title} 〜 ${cols[2].title}`:(cols[0].title);
   $('#calRange').textContent=label;
-  const host=$('#calMonths');host.innerHTML='';
+  const host=$('#calMonths');host.className='months g-'+state.ui.gran;host.innerHTML='';
   $$('#granSwitch button').forEach(b=>b.classList.toggle('on',b.dataset.g===state.ui.gran));
   if(state.ui.gran==='1day'){renderDayView(host,cols[0]);return;}
   const lanes=visibleLanes();
@@ -1445,52 +1469,98 @@ const PAPERS={
   'a4l':{w:297,h:210,label:'A4 横'},'a4p':{w:210,h:297,label:'A4 縦'},
   'a3l':{w:420,h:297,label:'A3 横'},'a3p':{w:297,h:420,label:'A3 縦'}
 };
-function openPrintModal(){
-  openModal(`
-    <div class="mh"><h3>PDF / 印刷</h3><button class="btn ghost" id="mClose">✕</button></div>
-    <div class="mb">
-      <div class="field"><label>用紙サイズ・向き</label>
-        <div class="seg" id="prPaper">
-          <button data-v="a4l" class="on">A4 横</button><button data-v="a4p">A4 縦</button>
-          <button data-v="a3l">A3 横</button><button data-v="a3p">A3 縦</button></div></div>
-      <div class="field"><label>出力範囲</label>
-        <div style="color:var(--sub);font-size:13px">現在表示中の期間（<b>${esc($('#calRange').textContent)}</b> / ${{'3month':'3ヶ月','1month':'1ヶ月','2week':'2週間','1week':'1週間','1day':'1日'}[state.ui.gran]}）を1ページに収めて出力します。</div></div>
-      <div class="field"><label>フィット</label>
-        <div class="seg" id="prFit"><button data-v="1" class="on">1ページに自動縮小</button><button data-v="0">原寸（複数ページ可）</button></div></div>
-      <div style="color:var(--sub);font-size:12px">※ 表示された印刷ダイアログでは、余白「なし」または「既定」、背景グラフィック「オン」を推奨します。PDF保存もこのダイアログから可能です。</div>
-    </div>
-    <div class="mf"><span></span><div style="display:flex;gap:8px">
-      <button class="btn" id="prCancel">キャンセル</button><button class="btn pri" id="prGo">印刷 / PDF</button></div></div>`);
-  let paper='a4l',fit=true;
-  segBind('#prPaper',v=>paper=v);segBind('#prFit',v=>fit=(v==='1'));
-  $('#mClose').onclick=$('#prCancel').onclick=closeModal;
-  $('#prGo').onclick=()=>{closeModal();setTimeout(()=>doPrint(paper,fit),120);};
+const RECPAPER={'3month':'a4l','1month':'a4p','2week':'a4p','1week':'a4p','1day':'a4p'};
+const GRANLABEL={'3month':'3ヶ月','1month':'1ヶ月','2week':'2週間','1week':'1週間','1day':'1日'};
+function paperPx(paper){const p=PAPERS[paper],m=8;return {availW:(p.w-2*m)*MM, availH:(p.h-2*m)*MM};}
+function includedProjects(){const ids=activeFilterProjects();return state.projects.filter(p=>ids.includes(p.id));}
+function defaultPrintTitle(){
+  const ps=includedProjects();
+  if(!ps.length)return 'スケジュール';
+  if(ps.length===1)return ps[0].name;
+  const joined=ps.map(p=>p.name).join(' / ');
+  return joined.length<=44?joined:`${ps.length}プロジェクト スケジュール`;
 }
-function doPrint(paper,fit){
-  const g=state.ui.gran;
-  $('#printTitle').textContent=`スケジュール（${$('#calRange').textContent}）`;
-  const f=state.ui.filter;
-  const names=f==='all'?'全プロジェクト':(Array.isArray(f)?f:[f]).map(id=>proj(id)?.name).join(' / ');
-  $('#printSub').textContent=`${names}　/　${new Date().toLocaleDateString('ja-JP')} 出力`;
+function setPrintHeader(title){
+  $('#printTitle').textContent=title||defaultPrintTitle();
+  const leg=$('#printLegend');leg.innerHTML='';
+  includedProjects().forEach(p=>{const s=document.createElement('span');s.className='lg';s.innerHTML=`<i style="background:${p.color}"></i>${esc(p.name)}`;leg.appendChild(s);});
+  $('#printSub').textContent=`${$('#calRange').textContent}（${GRANLABEL[state.ui.gran]}）　${new Date().toLocaleDateString('ja-JP')}出力`;
+}
+function measureNatH(availW){
+  const el=$('#printScale');const pw=el.style.width,pt=el.style.transform,ph=el.querySelector('.printhead').style.display;
+  el.querySelector('.printhead').style.display='flex';
+  el.style.transform='';el.style.width=availW+'px';void el.offsetHeight;
+  const h=el.getBoundingClientRect().height;
+  el.style.width=pw;el.style.transform=pt;el.querySelector('.printhead').style.display=ph;
+  return h;
+}
+function computeFit(paper,fit){
+  const {availW,availH}=paperPx(paper);
+  const natH=measureNatH(availW);
+  const safety=10; // guard against sub-pixel / border clipping (fixes 1ヶ月の下端切れ)
+  const s=fit?Math.min(1,(availH-safety)/natH):1;
+  return {availW,availH,natH,s};
+}
+function openPrintModal(){
+  let paper=RECPAPER[state.ui.gran]||'a4l';
+  let fit=true;
+  let title=defaultPrintTitle();
+  openModal(`
+    <div class="mh"><h3>印刷プレビュー</h3><button class="btn ghost" id="mClose">✕</button></div>
+    <div class="mb">
+      <div class="field"><label>見出しタイトル（初期はプロジェクト名）</label><input type="text" id="prTitle" value="${esc(title)}"></div>
+      <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">用紙：</span><div class="paperbtns" id="prPaper"></div></div>
+      <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">フィット：</span>
+        <div class="seg" id="prFit"><button data-v="1" class="on">1ページに収める</button><button data-v="0">原寸（複数ページ可）</button></div></div>
+      <div class="previewwrap"><div class="previewframe" id="previewFrame"><div id="previewPage"></div></div></div>
+      <div class="previewhint" id="prHint"></div>
+    </div>
+    <div class="mf"><span style="font-size:12px;color:var(--sub)">プレビューは実際の印刷結果と同じ縮尺です</span>
+      <div style="display:flex;gap:8px"><button class="btn" id="prCancel">キャンセル</button><button class="btn pri" id="prGo">印刷 / PDF</button></div></div>`,'wide');
+  const rec=RECPAPER[state.ui.gran];
+  const drawPaperBtns=()=>{const h=$('#prPaper');h.innerHTML='';['a4l','a4p','a3l','a3p'].forEach(pk=>{const btn=document.createElement('button');btn.className='paperbtn'+(pk===paper?' on':'');btn.innerHTML=`${PAPERS[pk].label}${pk===rec?'<span class="rec">推奨</span>':''}`;btn.onclick=()=>{paper=pk;drawPaperBtns();update();};h.appendChild(btn);});};
+  drawPaperBtns();
+  segBind('#prFit',v=>{fit=(v==='1');update();});
+  $('#prTitle').oninput=e=>{title=e.target.value;update();};
+  $('#mClose').onclick=$('#prCancel').onclick=closeModal;
+  $('#prGo').onclick=()=>{closeModal();setTimeout(()=>doPrint(paper,fit,title),120);};
+  function update(){renderPrintPreview(paper,fit,title);}
+  update();
+}
+function renderPrintPreview(paper,fit,title){
+  setPrintHeader(title);
+  const {availW,availH,natH,s}=computeFit(paper,fit);
+  const clone=$('#printScale').cloneNode(true);
+  clone.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));
+  clone.style.width=availW+'px';clone.style.transform=`scale(${s})`;clone.style.transformOrigin='top left';
+  const ph=clone.querySelector('.printhead');if(ph)ph.style.display='flex';
+  const disp=Math.min(680/availW, 460/availH);
+  const frame=$('#previewFrame');frame.style.width=(availW*disp)+'px';frame.style.height=(availH*disp)+'px';
+  const page=$('#previewPage');page.style.width=availW+'px';page.style.height=availH+'px';page.style.transform=`scale(${disp})`;
+  page.innerHTML='';page.appendChild(clone);
+  const overflow = !fit && natH>availH;
+  $('#prHint').innerHTML=`${GRANLABEL[state.ui.gran]}表示 ・ 用紙 <b>${PAPERS[paper].label}</b>${paper===rec_gran()?'（推奨）':''}　/　`+
+    (fit? (s<0.999?`1ページに収めるため 約${Math.round(s*100)}% に縮小`:'原寸で1ページに収まります'):
+          (overflow?'原寸のため複数ページに分割されます':'原寸で1ページに収まります'));
+}
+function rec_gran(){return RECPAPER[state.ui.gran];}
+function doPrint(paper,fit,title){
+  setPrintHeader(title);
   const p=PAPERS[paper];const margin=8;
-  // inject @page size
   let st=$('#printPageStyle');if(!st){st=document.createElement('style');st.id='printPageStyle';document.head.appendChild(st);}
   st.textContent=`@page{size:${p.w}mm ${p.h}mm;margin:${margin}mm}`;
-  const availW=(p.w-margin*2)*MM, availH=(p.h-margin*2)*MM;
-  const scaleEl=$('#printScale');const wrap=$('#calWrap');
-  scaleEl.style.transform='';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';
+  const scaleEl=$('#printScale'),wrap=$('#calWrap'),head=scaleEl.querySelector('.printhead');
+  scaleEl.style.transform='';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';head.style.display='';
+  // computeFit uses measureNatH which counts the (print-visible) header, so screen==print height
+  const {availW,availH,natH,s}=computeFit(paper,fit);
   if(fit){
-    // lay out at exact printable width, then scale down uniformly to fit height,
-    // and pin the container to the scaled box so layout reserves only one page.
     scaleEl.style.width=availW+'px';
-    void scaleEl.offsetHeight; // force reflow
-    const natH=scaleEl.scrollHeight;
-    const s=Math.min(1, availH/natH);
+    head.style.display='flex'; // header is shown in print; keep it counted here too
+    void scaleEl.offsetHeight;
     scaleEl.style.transform=`scale(${s})`;
-    wrap.style.height=Math.ceil(natH*s)+'px';
-    wrap.style.overflow='hidden';
+    wrap.style.height=Math.ceil(natH*s)+'px';wrap.style.overflow='hidden';
   }
-  const done=()=>{scaleEl.style.transform='';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';window.removeEventListener('afterprint',done);};
+  const done=()=>{scaleEl.style.transform='';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';head.style.display='';window.removeEventListener('afterprint',done);};
   window.addEventListener('afterprint',done);
   window.print();
 }
