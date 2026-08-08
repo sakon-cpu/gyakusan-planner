@@ -298,6 +298,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
     <div class="plist" id="navProjects"></div>
     <button class="addproj" id="navAddProj">＋ プロジェクト追加</button>
     <div style="flex:1"></div>
+    <button class="navbtn" id="navGoogle"><span class="gcal-dot" id="navGdot" style="margin-right:2px"></span><span id="navGoogleLbl">Googleでログイン</span></button>
     <button class="navbtn" data-view="settings"><span class="ic">⚙</span>設定</button>
   </aside>
 
@@ -694,6 +695,13 @@ function renderNav(){
   });
   const ic=$('#inboxcount');const n=state.tasks.filter(t=>!t.projectId&&t.status!=='done').length;
   ic.textContent=n?`(${n})`:'';
+  updateGoogleNav();
+}
+function updateGoogleNav(){
+  const dot=$('#navGdot'),lbl=$('#navGoogleLbl');if(!dot)return;
+  const on=gTokenValid();
+  dot.classList.toggle('on',on);
+  lbl.textContent=on?'Google 接続中':'Googleでログイン';
 }
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
@@ -1257,6 +1265,8 @@ function calStep(dir){
 /* ======================================================================
    GOOGLE CALENDAR (client-side, GIS token flow + Calendar REST)
    ====================================================================== */
+const BAKED_CLIENT_ID='683079998931-8bp3k6gou8n0668c2su4istisggpetal.apps.googleusercontent.com';
+function effClientId(){return ((state.google&&state.google.clientId)||BAKED_CLIENT_ID||'').trim();}
 let GTOKEN=null, GTOKEN_EXP=0, GTOKENCLIENT=null, GCALS=[];
 function gisLoaded(){return typeof google!=='undefined'&&google.accounts&&google.accounts.oauth2;}
 function loadGIS(){
@@ -1269,8 +1279,8 @@ function loadGIS(){
 }
 function gTokenValid(){return GTOKEN&&Date.now()<GTOKEN_EXP-60000;}
 async function gConnect(interactive=true){
-  const cid=(state.google.clientId||'').trim();
-  if(!cid){toast('先にクライアントIDを入力してください');return false;}
+  const cid=effClientId();
+  if(!cid){toast('クライアントIDが未設定です');return false;}
   if(location.protocol==='file:'){toast('file:// では動きません。公開URLで開いてください');return false;}
   await loadGIS();
   return new Promise((resolve)=>{
@@ -1298,11 +1308,12 @@ async function gAfterConnect(){
     const j=await gApi('https://www.googleapis.com/calendar/v3/users/me/calendarList');
     GCALS=(j.items||[]).map(c=>({id:c.id,name:c.summary,primary:!!c.primary}));
     if(!state.google.busyCalendars.length){const pr=GCALS.find(c=>c.primary);if(pr)state.google.busyCalendars=[pr.id];save();}
+    updateGoogleNav();
     if(current==='settings')renderGoogleSettings();
     await gFetchForCurrentView();
   }catch(e){toast('カレンダー一覧の取得に失敗');console.error(e);}
 }
-function gDisconnect(){GTOKEN=null;GTOKEN_EXP=0;GBUSY={};toast('切断しました');if(current==='settings')renderGoogleSettings();if(current==='calendar')renderCalendar();if(current==='today')renderToday();}
+function gDisconnect(){GTOKEN=null;GTOKEN_EXP=0;GBUSY={};toast('切断しました');updateGoogleNav();if(current==='settings')renderGoogleSettings();if(current==='calendar')renderCalendar();if(current==='today')renderToday();}
 async function gFetchEvents(timeMin,timeMax){
   GBUSY={};
   const cals=state.google.busyCalendars.length?state.google.busyCalendars:['primary'];
@@ -1331,7 +1342,6 @@ async function gFetchForCurrentView(){
   if(current==='today')renderToday();
 }
 async function confirmBlockToGoogle(b){
-  if(!state.google.clientId){switchView('settings');toast('先に設定画面でGoogle連携を設定してください');return;}
   if(!gTokenValid()){const ok=await gConnect(true);if(!ok)return;}
   const t=state.tasks.find(x=>x.id===b.taskId);
   const startDT=new Date(parseISO(b.date));startDT.setHours(Math.floor(b.start/60),b.start%60,0,0);
@@ -1371,7 +1381,7 @@ function googleGuideHTML(){
    ====================================================================== */
 function renderGoogleSettings(){
   const g=state.google;
-  $('#gClientId').value=g.clientId||'';
+  $('#gClientId').value=g.clientId||BAKED_CLIENT_ID;
   const connected=gTokenValid();
   $('#gcalState').innerHTML=`<span class="gcal-status"><span class="gcal-dot ${connected?'on':''}"></span>${connected?'接続中':'未接続'}</span>`;
   $$('#gUsePlan button').forEach(b=>b.classList.toggle('on',b.dataset.v===(g.useForPlanning?'yes':'no')));
@@ -1467,6 +1477,7 @@ function doPrint(paper,fit){
 function wire(){
   $$('#nav .navbtn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
   $('#navAddProj').onclick=()=>editProject(null);
+  $('#navGoogle').onclick=async()=>{if(gTokenValid()){switchView('settings');}else{await gConnect(true);updateGoogleNav();}};
   $('#btnQuickAdd').onclick=()=>openTask(null);
   $('#btnReplan').onclick=()=>{generateSchedule();renderToday();if(current==='calendar')renderCalendar();toast('締切から逆算して仮組みしました');};
   $('#btnInboxAdd').onclick=()=>openTask(null);
