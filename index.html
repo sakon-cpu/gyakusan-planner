@@ -617,7 +617,7 @@ function isWorkday(ds){const wd=parseISO(ds).getDay();if(!state.settings.useWeek
 function dayBusy(ds){
   const list=[];
   state.blocks.filter(b=>b.date===ds&&b.confirmed).forEach(b=>list.push([b.start,b.start+b.dur]));
-  if(state.google&&state.google.useForPlanning)(GBUSY[ds]||[]).forEach(iv=>list.push([iv.start,iv.end]));
+  if(state.google&&state.google.useForPlanning)(GBUSY[ds]||[]).forEach(iv=>{if(!iv.allDay)list.push([iv.start,iv.end]);});
   return list.sort((a,b)=>a[0]-b[0]);
 }
 function freeIntervals(ds){
@@ -1074,11 +1074,17 @@ function renderDayView(host,col){
     if(nowM>=sh*60&&nowM<=eh*60){const y=((nowM/60)-sh)*H;const nl=document.createElement('div');nl.className='nowline';nl.style.top=(y)+'px';nl.title='現在時刻';layer.appendChild(nl);}
   }
   // Google events (read-only) on the left half
+  let allDayTop=0;
   (GBUSY[ds]||[]).forEach(iv=>{
-    const top=((iv.start/60)-sh)*H; const height=Math.max(16,((iv.end-iv.start)/60)*H-2);
     const el=document.createElement('div');el.className='gevent';
-    el.style.top=(top+1)+'px';el.style.height=height+'px';el.style.left='50px';el.style.width='calc(50% - 56px)';
-    el.textContent=`${timeStr(iv.start)} ${iv.title||'(Google予定)'}`;
+    if(iv.allDay){
+      el.style.top=(allDayTop+1)+'px';el.style.height='18px';el.style.left='50px';el.style.width='calc(50% - 56px)';
+      el.textContent=`終日 ${iv.title||''}`;allDayTop+=20;
+    }else{
+      const top=((iv.start/60)-sh)*H; const height=Math.max(16,((iv.end-iv.start)/60)*H-2);
+      el.style.top=(top+1)+'px';el.style.height=height+'px';el.style.left='50px';el.style.width='calc(50% - 56px)';
+      el.textContent=`${timeStr(iv.start)} ${iv.title||'(Google予定)'}`;
+    }
     layer.appendChild(el);
   });
   const plan=blocksForDay(ds);
@@ -1260,6 +1266,7 @@ function calStep(dir){
   else if(g==='1week'){state.ui.calDay=iso(addDays(parseISO(state.ui.calDay),7*dir));}
   else if(g==='1day'){state.ui.calDay=iso(addDays(parseISO(state.ui.calDay),dir));}
   save();renderCalendar();
+  if(gTokenValid())gFetchForCurrentView();
 }
 
 /* ======================================================================
@@ -1315,31 +1322,43 @@ async function gAfterConnect(){
 }
 function gDisconnect(){GTOKEN=null;GTOKEN_EXP=0;GBUSY={};toast('切断しました');updateGoogleNav();if(current==='settings')renderGoogleSettings();if(current==='calendar')renderCalendar();if(current==='today')renderToday();}
 async function gFetchEvents(timeMin,timeMax){
-  GBUSY={};
+  GBUSY={};let count=0,err=null;
   const cals=state.google.busyCalendars.length?state.google.busyCalendars:['primary'];
   for(const calId of cals){
     try{
       const url=`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events?singleEvents=true&orderBy=startTime&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=2500`;
       const j=await gApi(url);
       (j.items||[]).forEach(ev=>{
-        if(!ev.start||!ev.start.dateTime)return; // skip all-day
-        const s=new Date(ev.start.dateTime), e=new Date(ev.end.dateTime);
-        const ds=iso(s);
-        const startM=s.getHours()*60+s.getMinutes();
-        let endM=e.getHours()*60+e.getMinutes(); if(iso(e)!==ds)endM=24*60;
-        (GBUSY[ds]=GBUSY[ds]||[]).push({start:startM,end:endM,title:ev.summary||'(予定)'});
+        if(ev.status==='cancelled')return;
+        if(ev.start&&ev.start.dateTime){
+          const s=new Date(ev.start.dateTime), e=new Date(ev.end.dateTime);
+          const ds=iso(s);
+          const startM=s.getHours()*60+s.getMinutes();
+          let endM=e.getHours()*60+e.getMinutes(); if(iso(e)!==ds)endM=24*60;
+          (GBUSY[ds]=GBUSY[ds]||[]).push({start:startM,end:endM,title:ev.summary||'(予定)',allDay:false});count++;
+        }else if(ev.start&&ev.start.date){
+          // all-day (可能なら複数日にまたがって表示。busyには使わない)
+          let s=parseISO(ev.start.date), e=parseISO(ev.end.date); // end is exclusive
+          for(let d=new Date(s); d<e; d.setDate(d.getDate()+1)){
+            (GBUSY[iso(d)]=GBUSY[iso(d)]||[]).push({start:0,end:0,title:ev.summary||'(終日)',allDay:true});count++;
+          }
+        }
       });
-    }catch(e){console.error('fetch cal',calId,e);}
+    }catch(e){err=e;console.error('fetch cal',calId,e);}
   }
+  if(err)toast('Google予定の取得に失敗しました（設定/権限をご確認ください）');
+  return count;
 }
 async function gFetchForCurrentView(){
   if(!gTokenValid())return;
-  // fetch a generous window around what we might plan/show
-  const from=parseISO(todayISO());const to=addDays(from,35);
-  await gFetchEvents(new Date(from.getFullYear(),from.getMonth(),from.getDate()).toISOString(), new Date(to.getFullYear(),to.getMonth(),to.getDate(),23,59).toISOString());
+  // wide window: 7日前〜120日先。表示中の月がこれより先なら合わせて広げる
+  const base=parseISO(todayISO());
+  let from=addDays(base,-7), to=addDays(base,120);
+  try{const anc=parseISO(state.ui.anchor); if(state.ui.gran==='3month'){const end=new Date(anc.getFullYear(),anc.getMonth()+3,0); if(end>to)to=end;} }catch(e){}
+  const n=await gFetchEvents(new Date(from.getFullYear(),from.getMonth(),from.getDate()).toISOString(), new Date(to.getFullYear(),to.getMonth(),to.getDate(),23,59).toISOString());
+  toast(n>0?`Googleの予定を ${n}件 取得しました`:'この期間にGoogleの予定はありませんでした');
   if(state.google.useForPlanning)generateSchedule();
-  if(current==='calendar')renderCalendar();
-  if(current==='today')renderToday();
+  renderCalendar();renderToday();
 }
 async function confirmBlockToGoogle(b){
   if(!gTokenValid()){const ok=await gConnect(true);if(!ok)return;}
