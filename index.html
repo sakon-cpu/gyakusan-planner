@@ -224,7 +224,8 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .cardlayer{position:absolute;inset:0;pointer-events:none}
 .calcard{position:absolute;border-radius:8px;padding:3px 7px;color:#fff;font-size:11.5px;font-weight:700;
   box-shadow:0 2px 6px rgba(20,25,40,.18);overflow:hidden;pointer-events:auto;cursor:grab;
-  display:flex;flex-direction:column;gap:1px;justify-content:flex-start;border:1px solid rgba(255,255,255,.35)}
+  display:flex;flex-direction:column;gap:1px;justify-content:flex-start;border:1px solid rgba(255,255,255,.35);
+  user-select:none;touch-action:none}
 .calcard .lbl{line-height:1.18;overflow:hidden}
 .calcard .sm{font-size:10px;font-weight:600;opacity:.92;line-height:1.2;white-space:pre-wrap}
 .calcard.tent{opacity:.9;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.18) 0 6px,transparent 6px 12px)}
@@ -1107,27 +1108,26 @@ function renderDayView(host,col){
 
 /* ---- Card drag & resize ---- */
 function attachCardHandlers(el,card,ctx){
-  const {col,lanes,H,grid}=ctx;
   el.addEventListener('pointerdown',ev=>{
     if(ev.button!==0)return;
     const mode = ev.target.closest('.rz.t')?'top' : ev.target.closest('.rz.b')?'bottom' : 'move';
-    ev.preventDefault();
     startDrag(el,card,ctx,mode,ev);
   });
   // double click to edit
-  el.addEventListener('dblclick',e=>{e.stopPropagation();editCard(card.id);});
+  el.addEventListener('dblclick',e=>{e.stopPropagation();e.preventDefault();editCard(card.id);});
 }
 function startDrag(el,card,ctx,mode,ev){
-  const {col,lanes,H}=ctx;
-  const monthsHost=$('#calMonths');
+  const {lanes}=ctx;
   const origStart=card.start,origEnd=card.end,origLane=card.laneId;
-  el.classList.add('dragging');
-  el.setPointerCapture(ev.pointerId);
   const startY=ev.clientY, startX=ev.clientX;
-  let lastHot=null;
+  let active=false; // becomes true only after the pointer actually moves (so click/dblclick still work)
   const clearHot=()=>{$$('.lc.hot').forEach(x=>x.classList.remove('hot'));};
+  function begin(){
+    active=true;
+    el.classList.add('dragging');
+    try{el.setPointerCapture(ev.pointerId);}catch(e){}
+  }
   function hitTest(cx,cy){
-    // find lanecell under pointer across all month columns
     const els=document.elementsFromPoint(cx,cy);
     const lc=els.find(x=>x.classList&&x.classList.contains('lc'));
     if(lc)return {date:lc.dataset.date,lane:lc.dataset.lane};
@@ -1136,15 +1136,18 @@ function startDrag(el,card,ctx,mode,ev){
     return null;
   }
   function onMove(e){
+    if(!active){
+      if(Math.abs(e.clientX-startX)<4 && Math.abs(e.clientY-startY)<4)return; // below threshold: not a drag yet
+      begin();
+    }
+    e.preventDefault();
     const hit=hitTest(e.clientX,e.clientY);
-    // visual follow: translate by delta so card stays under cursor
     const dx=e.clientX-startX, dy=e.clientY-startY;
     el.style.transform=`translate(${mode==='move'?dx:0}px, ${mode==='move'?dy:0}px) scale(1.02)`;
     clearHot();
     if(hit){
       const cell=[...document.querySelectorAll(`.lc[data-date="${hit.date}"][data-lane="${hit.lane}"]`)][0];
       if(cell)cell.classList.add('hot');
-      lastHot=hit;
       if(mode==='move'){
         const span=daysBetween(origStart,origEnd);
         card.start=hit.date; card.end=iso(addDays(parseISO(hit.date),span));
@@ -1157,9 +1160,10 @@ function startDrag(el,card,ctx,mode,ev){
     }
   }
   function onUp(e){
-    el.releasePointerCapture(ev.pointerId);
     document.removeEventListener('pointermove',onMove);
     document.removeEventListener('pointerup',onUp);
+    if(!active)return; // was a click (or double-click) — leave it to the dblclick handler
+    try{el.releasePointerCapture(ev.pointerId);}catch(e){}
     clearHot();
     el.classList.remove('dragging');el.style.transform='';
     if(card.start!==origStart||card.end!==origEnd||card.laneId!==origLane){save();toast('予定を移動しました');}
