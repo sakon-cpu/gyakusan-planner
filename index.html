@@ -236,6 +236,8 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .calcard:hover .rz i{opacity:1}
 .calcard.dragging{opacity:.85;z-index:50;cursor:grabbing;box-shadow:0 10px 26px rgba(10,15,30,.35);transform:scale(1.02)}
 .calcard.dim{opacity:.18}
+.calcard.donecard{opacity:.55}
+.calcard.donecard .lbl{text-decoration:line-through}
 /* drag: source stays as a faint placeholder, a translucent ghost follows the cursor */
 .calcard.dragsource{opacity:.25!important;box-shadow:none!important;filter:saturate(.7)}
 .dragghost{position:fixed;z-index:9999;pointer-events:none;opacity:.8;border-radius:8px;color:#fff;font-weight:700;
@@ -368,7 +370,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
       <div class="pagehead">
         <div><h1>CALENDAR</h1><div class="date">全プロジェクト横断スケジュール</div></div>
         <div class="tools">
-          <button class="btn" id="btnAddCard">＋ 予定カード</button>
+          <button class="btn" id="btnAddCard">＋ 予定（タスク）</button>
           <button class="btn" id="btnShift">⇄ 全体をずらす</button>
           <button class="btn" id="btnText">📝 テキスト出力</button>
           <button class="btn" id="btnPrint">🖶 PDF / 印刷</button>
@@ -588,6 +590,27 @@ function migrate(){
   if(state.settings&&state.settings.dailyCap==null)state.settings.dailyCap=180;
   (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||/client/i.test(l.name)))?'client':'self';});
   (state.projects||[]).forEach(p=>{if(p.client==null)p.client='';});
+  const firstSelf=()=>{const l=(state.lanes||[]).find(x=>x.kind==='self')||state.lanes[0];return l?l.id:null;};
+  const firstClient=()=>{const l=(state.lanes||[]).find(x=>x.kind==='client')||state.lanes[0];return l?l.id:null;};
+  // ensure every task has the unified fields
+  (state.tasks||[]).forEach(t=>{
+    if(t.start===undefined)t.start='';
+    if(t.end===undefined)t.end='';
+    if(t.summary==null)t.summary='';
+    if(!t.laneId)t.laneId=(t.side==='client'?firstClient():firstSelf());
+    if(!t.side){const ln=lane(t.laneId);t.side=ln&&ln.kind==='client'?'client':'self';}
+    if(!t.comms)t.comms=[];if(!t.subtasks)t.subtasks=[];
+  });
+  // one-time: fold legacy calendar "cards" into tasks so calendar⇄TODO share one source
+  if(Array.isArray(state.cards)){
+    state.cards.forEach(c=>{
+      state.tasks.push({id:c.id||uid(),projectId:c.projectId,laneId:c.laneId||firstSelf(),name:c.label||'（無題）',
+        start:c.start||'',end:c.end||c.start||'',deadline:c.end||'',estMin:120,priority:'mid',status:'todo',
+        side:(lane(c.laneId)&&lane(c.laneId).kind==='client')?'client':'self',summary:c.summary||'',notes:'',subtasks:[],comms:[]});
+    });
+    delete state.cards;
+    save();
+  }
 }
 function seed(){
   const t=new Date(); const T=iso(t);
@@ -600,31 +623,23 @@ function seed(){
     blocks:[],
     lanes:[{id:lSelf,name:'自社',kind:'self'},{id:lClient,name:'先方',kind:'client'}],
     projects:[
-      {id:p1,name:'映画A（自社ブランディング）',color:'#2f6df6',deadline:d(84),status:'active',selfContained:false},
-      {id:p2,name:'YouTube案件B',color:'#e5484d',deadline:d(20),status:'active',selfContained:false},
-      {id:p3,name:'会社業務',color:'#f5a623',deadline:'',status:'active',selfContained:true},
+      {id:p1,name:'映画A（自社ブランディング）',color:'#2f6df6',deadline:d(84),status:'active',selfContained:false,client:''},
+      {id:p2,name:'YouTube案件B',color:'#e5484d',deadline:d(20),status:'active',selfContained:false,client:''},
+      {id:p3,name:'会社業務',color:'#f5a623',deadline:'',status:'active',selfContained:true,client:''},
     ],
+    // 単一エンティティ：TODO＝カレンダーのバー。start/end があるものがカレンダーに表示される。
     tasks:[
-      {id:uid(),projectId:p1,name:'脚本 第一稿',deadline:d(12),estMin:600,priority:'hi',status:'doing',side:'self',notes:'',
-        subtasks:[{id:uid(),text:'構成',done:true},{id:uid(),text:'Scene 1-20',done:false},{id:uid(),text:'Scene 21-40',done:false},{id:uid(),text:'推敲',done:false},{id:uid(),text:'Pチェック',done:false}],
-        comms:[{id:uid(),type:'consult',text:'AスタジオとBスタジオどちらにするか',done:false},{id:uid(),type:'decide',text:'8/14までにプロデューサー承認',done:false}]},
-      {id:uid(),projectId:p1,name:'キャスティング',deadline:d(33),estMin:480,priority:'mid',status:'todo',side:'self',notes:'',subtasks:[],comms:[]},
-      {id:uid(),projectId:p1,name:'ロケーション決定',deadline:d(43),estMin:360,priority:'mid',status:'todo',side:'client',notes:'',
-        subtasks:[{id:uid(),text:'候補地リストアップ',done:true},{id:uid(),text:'ロケハン',done:true},{id:uid(),text:'見積取得',done:false},{id:uid(),text:'最終決裁',done:false}],
-        comms:[{id:uid(),type:'report',text:'ロケハン完了',done:true}]},
-      {id:uid(),projectId:p2,name:'クライアント構成確認',deadline:d(2),estMin:120,priority:'hi',status:'doing',side:'client',notes:'先方確認に時間がかかる',subtasks:[],comms:[{id:uid(),type:'contact',text:'本日中に相談を送る',done:false}]},
-      {id:uid(),projectId:p2,name:'企画書 完成',deadline:d(6),estMin:660,priority:'hi',status:'todo',side:'self',notes:'',
-        subtasks:[{id:uid(),text:'資料収集 2h',done:false},{id:uid(),text:'構成 2h',done:false},{id:uid(),text:'初稿 4h',done:false},{id:uid(),text:'修正 2h',done:false},{id:uid(),text:'最終修正 1h',done:false}],comms:[]},
-      {id:uid(),projectId:p3,name:'経費処理',deadline:T,estMin:30,priority:'lo',status:'todo',side:'self',notes:'',subtasks:[],comms:[]},
-      {id:uid(),projectId:null,name:'名刺デザインの見積を取る',deadline:'',estMin:30,priority:'lo',status:'todo',side:'self',notes:'',subtasks:[],comms:[]},
-    ],
-    cards:[
-      {id:uid(),projectId:p1,laneId:lSelf,start:d(2),end:d(12),label:'脚本 第一稿',summary:'構成→推敲まで'},
-      {id:uid(),projectId:p1,laneId:lClient,start:d(14),end:d(33),label:'キャスティング',summary:'先方調整あり'},
-      {id:uid(),projectId:p1,laneId:lSelf,start:d(35),end:d(50),label:'撮影準備',summary:''},
-      {id:uid(),projectId:p2,laneId:lClient,start:d(0),end:d(2),label:'構成確認',summary:'先方待ち'},
-      {id:uid(),projectId:p2,laneId:lSelf,start:d(1),end:d(6),label:'企画書',summary:'資料→初稿→修正'},
-      {id:uid(),projectId:p3,laneId:lSelf,start:d(0),end:d(0),label:'経費処理',summary:''},
+      {id:uid(),projectId:p1,laneId:lSelf,name:'脚本 第一稿',start:d(2),end:d(12),deadline:d(12),estMin:600,priority:'hi',status:'doing',side:'self',summary:'構成→推敲まで',notes:'',
+        subtasks:[{id:uid(),text:'構成',done:true},{id:uid(),text:'Scene 1-20',done:false},{id:uid(),text:'Scene 21-40',done:false},{id:uid(),text:'推敲',done:false},{id:uid(),text:'Pチェック',done:false}],comms:[]},
+      {id:uid(),projectId:p1,laneId:lClient,name:'キャスティング',start:d(14),end:d(33),deadline:d(33),estMin:480,priority:'mid',status:'todo',side:'client',summary:'先方調整あり',notes:'',subtasks:[],comms:[]},
+      {id:uid(),projectId:p1,laneId:lClient,name:'ロケーション決定',start:d(35),end:d(45),deadline:d(43),estMin:360,priority:'mid',status:'todo',side:'client',summary:'',notes:'',
+        subtasks:[{id:uid(),text:'候補地リストアップ',done:true},{id:uid(),text:'ロケハン',done:true},{id:uid(),text:'見積取得',done:false},{id:uid(),text:'最終決裁',done:false}],comms:[]},
+      {id:uid(),projectId:p1,laneId:lSelf,name:'撮影準備',start:d(46),end:d(60),deadline:'',estMin:480,priority:'mid',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
+      {id:uid(),projectId:p2,laneId:lClient,name:'クライアント構成確認',start:d(0),end:d(2),deadline:d(2),estMin:120,priority:'hi',status:'doing',side:'client',summary:'先方待ち',notes:'先方確認に時間がかかる',subtasks:[],comms:[]},
+      {id:uid(),projectId:p2,laneId:lSelf,name:'企画書 完成',start:d(1),end:d(6),deadline:d(6),estMin:660,priority:'hi',status:'todo',side:'self',summary:'資料→初稿→修正',notes:'',
+        subtasks:[{id:uid(),text:'資料収集',done:false},{id:uid(),text:'構成',done:false},{id:uid(),text:'初稿',done:false},{id:uid(),text:'修正',done:false}],comms:[]},
+      {id:uid(),projectId:p3,laneId:lSelf,name:'経費処理',start:T,end:T,deadline:T,estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
+      {id:uid(),projectId:null,laneId:lSelf,name:'名刺デザインの見積を取る',start:'',end:'',deadline:'',estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
     ],
     ui:{gran:'3month',anchor:iso(new Date(t.getFullYear(),t.getMonth(),1)),filter:'all',calDay:T}
   };
@@ -633,6 +648,8 @@ function seed(){
 /* ---------------- helpers ---------------- */
 const proj=id=>state.projects.find(p=>p.id===id);
 const lane=id=>state.lanes.find(l=>l.id===id);
+// tasks that appear on the calendar (have a start & end period and a project)
+const calTasks=()=>state.tasks.filter(t=>t.projectId&&t.start&&t.end);
 const projColor=id=>{const p=proj(id);return p?p.color:'#94a3b8';};
 function minToHM(m){const h=Math.floor(m/60),mm=m%60;return (h?h+'時間':'')+(mm?mm+'分':(h?'':'0分'));}
 function timeStr(min){return pad(Math.floor(min/60))+':'+pad(min%60);}
@@ -903,11 +920,16 @@ function openModal(html,cls=''){
 function closeModal(){$('#modalBg').classList.remove('show');$('#modalHost').innerHTML='';}
 $('#modalBg').addEventListener('mousedown',e=>{if(e.target===$('#modalBg'))closeModal();});
 
-function openTask(id,forceProject){
+function defaultLaneId(kind){const l=state.lanes.find(x=>x.kind===(kind||'self'))||state.lanes[0];return l?l.id:null;}
+function openTask(id,forceProject,opts){
+  opts=opts||{};
   let t=id?state.tasks.find(x=>x.id===id):null;
   const isNew=!t;
-  if(isNew){t={id:uid(),projectId:forceProject||null,name:'',deadline:'',estMin:60,priority:'mid',status:'todo',side:'self',notes:'',subtasks:[],comms:[]};}
-  const projOpts=state.projects.filter(p=>p.status==='active').map(p=>`<option value="${p.id}" ${p.projectId}>`).join('');
+  if(isNew){
+    t={id:uid(),projectId:forceProject||(opts.withDates?(state.projects[0]&&state.projects[0].id):null),laneId:defaultLaneId('self'),
+      name:'',start:'',end:'',deadline:'',estMin:60,priority:'mid',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]};
+    if(opts.withDates){t.start=state.ui.calDay||todayISO();t.end=t.start;}
+  }
   const pcur=t.projectId;
   openModal(`
     <div class="mh"><h3>${isNew?'タスクを追加':'タスク詳細'}</h3><button class="btn ghost" id="mClose">✕</button></div>
@@ -917,15 +939,20 @@ function openTask(id,forceProject){
         <div><label>プロジェクト</label><select id="tProj"><option value="">（INBOX / 未割当）</option>
           ${state.projects.filter(p=>p.status==='active').map(p=>`<option value="${p.id}" ${p.id===pcur?'selected':''}>${esc(p.name)}</option>`).join('')}
         </select></div>
-        <div><label>締切</label><input type="date" id="tDead" value="${t.deadline||''}"></div>
+        <div><label>レーン（自社／先方など）</label><select id="tLane">
+          ${state.lanes.map(l=>`<option value="${l.id}" ${l.id===t.laneId?'selected':''}>${esc(l.name)}</option>`).join('')}
+        </select></div>
       </div>
+      <div class="field row" style="align-items:flex-end">
+        <div><label>カレンダー表示：開始日</label><input type="date" id="tStart" value="${t.start||''}"></div>
+        <div><label>終了日</label><input type="date" id="tEnd" value="${t.end||''}"></div>
+      </div>
+      <div style="font-size:12px;color:var(--sub);margin:-6px 0 12px">開始日・終了日を入れるとカレンダーにバーとして表示されます（空ならTODOのみ）。1日だけなら開始＝終了でOK。</div>
       <div class="field row">
+        <div><label>締切</label><input type="date" id="tDead" value="${t.deadline||''}"></div>
         <div><label>所要時間</label><select id="tEst">
           ${[['30','30分'],['60','1時間'],['120','2時間'],['240','4時間'],['480','1日(8h)'],['960','2日']].map(([v,l])=>`<option value="${v}" ${+v===t.estMin?'selected':''}>${l}</option>`).join('')}
         </select></div>
-        <div><label>担当区分</label><div class="seg" id="tSide">
-          <button data-v="self" class="${t.side==='self'?'on':''}">自社</button>
-          <button data-v="client" class="${t.side==='client'?'on':''}">先方</button></div></div>
       </div>
       <div class="field row">
         <div><label>優先度</label><div class="seg" id="tPri">
@@ -937,6 +964,7 @@ function openTask(id,forceProject){
           <button data-v="doing" class="${t.status==='doing'?'on':''}">進行中</button>
           <button data-v="done" class="${t.status==='done'?'on':''}">完了</button></div></div>
       </div>
+      <div class="field"><label>要約（カレンダーのバーに表示・任意）</label><input type="text" id="tSum" value="${esc(t.summary||'')}" placeholder="例：構成→初稿→推敲まで"></div>
       <div class="field"><label>サブタスク</label><div class="subtasks" id="tSubs"></div>
         <div class="addline"><input type="text" id="subNew" placeholder="サブタスクを追加してEnter"></div></div>
       <div class="field"><label>メモ</label><textarea id="tNotes" placeholder="自由記述">${esc(t.notes)}</textarea></div>
@@ -960,14 +988,22 @@ function openTask(id,forceProject){
   };
   renderSubs();
   $('#subNew').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.value.trim()){draft.subtasks.push({id:uid(),text:e.target.value.trim(),done:false});e.target.value='';renderSubs();}});
-  segBind('#tSide',v=>draft.side=v);segBind('#tPri',v=>draft.priority=v);segBind('#tStat',v=>draft.status=v);
+  segBind('#tPri',v=>draft.priority=v);segBind('#tStat',v=>draft.status=v);
   $('#mClose').onclick=$('#tCancel').onclick=closeModal;
-  $('#tDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('このタスクを削除しますか？')){state.tasks=state.tasks.filter(x=>x.id!==t.id);save();closeModal();afterTaskChange();}};
+  $('#tDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('このタスクを削除しますか？（カレンダーからも消えます）')){state.tasks=state.tasks.filter(x=>x.id!==t.id);save();closeModal();afterTaskChange();}};
   $('#tSave').onclick=()=>{
     draft.name=$('#tName').value.trim()||'（無題）';
     draft.projectId=$('#tProj').value||null;
+    draft.laneId=$('#tLane').value;
+    const ln=lane(draft.laneId);draft.side=ln&&ln.kind==='client'?'client':'self';
+    draft.start=$('#tStart').value||'';
+    draft.end=$('#tEnd').value||'';
+    if(draft.start&&!draft.end)draft.end=draft.start;
+    if(draft.end&&!draft.start)draft.start=draft.end;
+    if(draft.start&&draft.end&&draft.end<draft.start)draft.end=draft.start;
     draft.deadline=$('#tDead').value||'';
     draft.estMin=+$('#tEst').value;
+    draft.summary=$('#tSum').value;
     draft.notes=$('#tNotes').value;
     if(isNew)state.tasks.push(draft);
     else{const idx=state.tasks.findIndex(x=>x.id===t.id);state.tasks[idx]=draft;}
@@ -999,7 +1035,7 @@ function editProject(id){
   PALETTE.forEach(c=>{const s=document.createElement('div');s.className='sw'+(c===d.color?' on':'');s.style.background=c;s.onclick=()=>{d.color=c;$$('#pColor .sw').forEach(x=>x.classList.remove('on'));s.classList.add('on');};cp.appendChild(s);});
   segBind('#pSelf',v=>d.selfContained=(v==='yes'));
   $('#mClose').onclick=$('#pCancel').onclick=closeModal;
-  $('#pDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('プロジェクトを削除しますか？（タスク・カードも削除されます）')){state.projects=state.projects.filter(x=>x.id!==id);state.tasks=state.tasks.filter(t=>t.projectId!==id);state.cards=state.cards.filter(c=>c.projectId!==id);generateSchedule();save();closeModal();renderNav();switchView('today');}};
+  $('#pDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('プロジェクトを削除しますか？（このプロジェクトのタスク・予定も削除されます）')){state.projects=state.projects.filter(x=>x.id!==id);state.tasks=state.tasks.filter(t=>t.projectId!==id);generateSchedule();save();closeModal();renderNav();switchView('today');}};
   $('#pSave').onclick=()=>{d.name=$('#pName').value.trim()||'（無題）';d.deadline=$('#pDead').value||'';d.client=$('#pClient').value.trim();
     if(isNew)state.projects.push(d);else{const i=state.projects.findIndex(x=>x.id===id);state.projects[i]=d;}
     save();closeModal();renderNav();if(isNew)openProject(d.id);else renderProject();toast('保存しました');};
@@ -1099,9 +1135,9 @@ function renderCalendar(){
     const L=lanes.length;
     const showSummary=state.ui.gran==='3month'||state.ui.gran==='1month';
     lanes.forEach((ln,li)=>{
-      const laneCards=state.cards.filter(c=>c.laneId===ln.id&&allowed.includes(c.projectId)&&!(c.end<start||c.start>end))
+      const laneCards=calTasks().filter(c=>c.laneId===ln.id&&allowed.includes(c.projectId)&&!(c.end<start||c.start>end))
         .sort((a,b)=>a.start.localeCompare(b.start)||b.end.localeCompare(a.end));
-      // greedy sub-column assignment (local map; never mutate/persist card objects)
+      // greedy sub-column assignment (local map; never mutate task objects)
       const colEnds=[]; const subOf={};
       laneCards.forEach(c=>{
         let sub=colEnds.findIndex(e=>e<c.start);
@@ -1114,13 +1150,14 @@ function renderCalendar(){
         const s=Math.max(0,daysBetween(start,card.start));
         const e=Math.min(col.days.length-1,daysBetween(start,card.end));
         const top=s*H, height=(e-s+1)*H-3;
-        const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self');
+        const done=card.status==='done';
+        const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self')+(done?' donecard':'');
         el.style.top=(top+1)+'px';
         el.style.height=Math.max(20,height)+'px';
         el.style.left=`calc(46px + (100% - 46px) * ${(li+cardSub/K)/L} + 2px)`;
         el.style.width=`calc((100% - 46px) * ${1/(L*K)} - 4px)`;
         el.style.background=projColor(card.projectId);
-        el.innerHTML=`<div class="rz t"><i></i></div><div class="lbl">${esc(card.label)}</div>
+        el.innerHTML=`<div class="rz t"><i></i></div><div class="lbl">${done?'✓ ':''}${esc(card.name)}</div>
           ${showSummary&&card.summary?`<div class="sm">${esc(card.summary)}</div>`:''}
           <div class="rz b"><i></i></div>`;
         el.dataset.cardId=card.id;
@@ -1186,7 +1223,7 @@ function attachCardHandlers(el,card,ctx){
     startDrag(el,card,ctx,mode,ev);
   });
   // double click to edit
-  el.addEventListener('dblclick',e=>{e.stopPropagation();e.preventDefault();editCard(card.id);});
+  el.addEventListener('dblclick',e=>{e.stopPropagation();e.preventDefault();openTask(card.id);});
 }
 function startDrag(el,card,ctx,mode,ev){
   const {lanes}=ctx;
@@ -1248,41 +1285,15 @@ function startDrag(el,card,ctx,mode,ev){
     if(!active){clearHot();return;} // simple click — let dblclick handle it
     clearHot();
     const changed=prop.start!==origStart||prop.end!==origEnd||prop.lane!==origLane;
-    if(changed){card.start=prop.start;card.end=prop.end;card.laneId=prop.lane;save();toast('予定を移動しました');}
-    renderCalendar();
+    if(changed){card.start=prop.start;card.end=prop.end;card.laneId=prop.lane;const ln=lane(prop.lane);if(ln)card.side=ln.kind==='client'?'client':'self';save();toast('予定を移動しました');}
+    renderCalendar();renderNav();
   }
   document.addEventListener('pointermove',onMove);
   document.addEventListener('pointerup',onUp);
 }
 
-function editCard(id){
-  const c=id?state.cards.find(x=>x.id===id):null;const isNew=!c;
-  const d=c?JSON.parse(JSON.stringify(c)):{id:uid(),projectId:state.projects[0]?.id,laneId:state.lanes[0]?.id,start:state.ui.calDay||todayISO(),end:state.ui.calDay||todayISO(),label:'',summary:''};
-  openModal(`
-    <div class="mh"><h3>${isNew?'予定カードを追加':'予定カードを編集'}</h3><button class="btn ghost" id="mClose">✕</button></div>
-    <div class="mb">
-      <div class="field"><label>タイトル（短く）</label><input type="text" id="cLabel" value="${esc(d.label)}" placeholder="例：脚本 第一稿"></div>
-      <div class="field"><label>要約（3ヶ月表示で表示・自由記述）</label><textarea id="cSum" placeholder="例：構成→初稿→推敲まで">${esc(d.summary)}</textarea></div>
-      <div class="field row">
-        <div><label>プロジェクト</label><select id="cProj">${state.projects.map(p=>`<option value="${p.id}" ${p.id===d.projectId?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
-        <div><label>レーン</label><select id="cLane">${state.lanes.map(l=>`<option value="${l.id}" ${l.id===d.laneId?'selected':''}>${esc(l.name)}</option>`).join('')}</select></div>
-      </div>
-      <div class="field row"><div><label>開始</label><input type="date" id="cStart" value="${d.start}"></div>
-        <div><label>終了</label><input type="date" id="cEnd" value="${d.end}"></div></div>
-    </div>
-    <div class="mf"><button class="btn ghost" id="cDel" style="color:var(--danger)">${isNew?'':'削除'}</button>
-      <div style="display:flex;gap:8px"><button class="btn" id="cCancel">キャンセル</button><button class="btn pri" id="cSave">保存</button></div></div>`);
-  $('#mClose').onclick=$('#cCancel').onclick=closeModal;
-  $('#cDel').onclick=()=>{if(!isNew){state.cards=state.cards.filter(x=>x.id!==id);save();}closeModal();renderCalendar();};
-  $('#cSave').onclick=()=>{
-    d.label=$('#cLabel').value.trim()||'（無題）';d.summary=$('#cSum').value;
-    d.projectId=$('#cProj').value;d.laneId=$('#cLane').value;
-    d.start=$('#cStart').value;d.end=$('#cEnd').value;
-    if(d.end<d.start)d.end=d.start;
-    if(isNew)state.cards.push(d);else{const i=state.cards.findIndex(x=>x.id===id);state.cards[i]=d;}
-    save();closeModal();renderCalendar();toast('保存しました');
-  };
-}
+// カレンダーの「＋予定」＝タスク作成（日付プリセット）。編集も同じタスク詳細を開く。
+function editCard(id){ openTask(id, null, {withDates:true}); }
 
 /* ---- filters & lanes UI ---- */
 function renderCalFilters(){
@@ -1318,8 +1329,10 @@ function renderLaneTools(){
     t.querySelector('.rm').onclick=(e)=>{
       e.stopPropagation();
       if(state.lanes.length<=1){toast('レーンは最低1つ必要です');return;}
-      if(state.cards.some(c=>c.laneId===l.id)){if(!confirm('このレーンのカードも削除されます。よろしいですか？'))return;state.cards=state.cards.filter(c=>c.laneId!==l.id);}
-      state.lanes=state.lanes.filter(x=>x.id!==l.id);save();renderCalendar();
+      const others=state.lanes.filter(x=>x.id!==l.id);
+      const used=state.tasks.filter(t=>t.laneId===l.id);
+      if(used.length){const dest=others[0];if(!confirm(`このレーンのタスク${used.length}件を「${dest.name}」へ移動します。よろしいですか？`))return;used.forEach(t=>{t.laneId=dest.id;t.side=dest.kind==='client'?'client':'self';});}
+      state.lanes=others;save();renderCalendar();renderNav();
     };
     host.appendChild(t);
   });
@@ -1614,7 +1627,7 @@ function cardLine(c,withProject){
   const p=proj(c.projectId);
   const seg=[fmtRange(c.start,c.end)];
   if(withProject)seg.push(p?p.name:'');
-  seg.push(c.label);
+  seg.push(c.name);
   seg.push(`[${laneTag(c)}]`);
   if(c.summary)seg.push(c.summary);
   return seg.join('｜');
@@ -1627,7 +1640,7 @@ function generateScheduleText(opt){
   out.push(`スケジュール（${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 時点）`);
   out.push('');
   if(opt.group==='date'){
-    const cards=state.cards.filter(c=>ids.includes(c.projectId)).slice().sort((a,b)=>a.start.localeCompare(b.start)||a.end.localeCompare(b.end));
+    const cards=calTasks().filter(c=>ids.includes(c.projectId)).slice().sort((a,b)=>a.start.localeCompare(b.start)||a.end.localeCompare(b.end));
     if(!cards.length)out.push('（予定はありません）');
     cards.forEach(c=>out.push(cardLine(c,true)));
     if(opt.includeTasks){
@@ -1637,8 +1650,8 @@ function generateScheduleText(opt){
   }else{
     projs.forEach(p=>{
       out.push(`■${p.name}${opt.showDeadline&&p.deadline?`（最終締切 ${fmtJ(p.deadline)}）`:''}`);
-      const cards=state.cards.filter(c=>c.projectId===p.id).slice().sort((a,b)=>a.start.localeCompare(b.start));
-      if(!cards.length)out.push('（予定カードなし）');
+      const cards=calTasks().filter(c=>c.projectId===p.id).slice().sort((a,b)=>a.start.localeCompare(b.start));
+      if(!cards.length)out.push('（予定なし）');
       cards.forEach(c=>out.push(cardLine(c,false)));
       if(opt.includeTasks){
         const ts=state.tasks.filter(t=>t.projectId===p.id&&t.deadline&&t.status!=='done').slice().sort((a,b)=>a.deadline.localeCompare(b.deadline));
@@ -1710,7 +1723,7 @@ function openShiftModal(){
     const n=signedDays();if(!n){toast('日数を入力してください');return;}
     const ids=scope==='filter'?activeFilterProjects():state.projects.map(p=>p.id);
     const shift=isoDate=>iso(addDays(parseISO(isoDate),n));
-    state.cards.forEach(c=>{if(ids.includes(c.projectId)){c.start=shift(c.start);c.end=shift(c.end);}});
+    state.tasks.forEach(c=>{if(ids.includes(c.projectId)&&c.start&&c.end){c.start=shift(c.start);c.end=shift(c.end);}});
     if(shiftDeadlines){
       state.tasks.forEach(t=>{if(t.deadline&&ids.includes(t.projectId))t.deadline=shift(t.deadline);});
       state.projects.forEach(p=>{if(ids.includes(p.id)&&p.deadline)p.deadline=shift(p.deadline);});
