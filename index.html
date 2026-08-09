@@ -194,8 +194,9 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .daygrid{position:relative}
 .dayrow{display:flex;border-bottom:1px solid #eef0f4;position:relative}
 .dayrow.wknd{background:#fafbfd}
-.dayrow.sat .dnum{color:#2563eb}
-.dayrow.sun .dnum,.dayrow.hol .dnum{color:var(--danger)}
+.dayrow.sat .dnum,.dayrow.sat .dwk{color:#2563eb}
+.dayrow.sun .dnum,.dayrow.sun .dwk{color:var(--danger)}
+.dayrow.hol .dnum,.dayrow.hol .dwk{color:var(--danger)} /* 祝日は土曜と重なっても赤優先（後勝ち） */
 .dayrow.today{background:var(--accent-soft)}
 .dayrow .gut{flex:0 0 48px;border-right:1px solid var(--line);padding:2px 5px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;overflow:hidden}
 .dayrow .dtop{display:flex;align-items:baseline;gap:4px;line-height:1}
