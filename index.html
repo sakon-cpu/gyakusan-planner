@@ -587,6 +587,7 @@ function migrate(){
   if(!state.blocks)state.blocks=[];
   if(state.settings&&state.settings.dailyCap==null)state.settings.dailyCap=180;
   (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||/client/i.test(l.name)))?'client':'self';});
+  (state.projects||[]).forEach(p=>{if(p.client==null)p.client='';});
 }
 function seed(){
   const t=new Date(); const T=iso(t);
@@ -979,13 +980,15 @@ function afterTaskChange(){generateSchedule();renderNav();if(current==='today')r
 /* ---------- PROJECT settings modal ---------- */
 function editProject(id){
   const p=id?proj(id):null;const isNew=!p;
-  const d=p?JSON.parse(JSON.stringify(p)):{id:uid(),name:'',color:PALETTE[state.projects.length%PALETTE.length],deadline:'',status:'active',selfContained:false};
+  const d=p?JSON.parse(JSON.stringify(p)):{id:uid(),name:'',color:PALETTE[state.projects.length%PALETTE.length],deadline:'',status:'active',selfContained:false,client:''};
+  if(d.client==null)d.client='';
   openModal(`
     <div class="mh"><h3>${isNew?'プロジェクトを追加':'プロジェクト設定'}</h3><button class="btn ghost" id="mClose">✕</button></div>
     <div class="mb">
       <div class="field"><label>プロジェクト名</label><input type="text" id="pName" value="${esc(d.name)}"></div>
       <div class="field"><label>カラー</label><div class="swatchpick" id="pColor"></div></div>
       <div class="field"><label>最終締切</label><input type="date" id="pDead" value="${d.deadline||''}"></div>
+      <div class="field"><label>取引先名（テキスト出力で「先方」の代わりに表示・任意）</label><input type="text" id="pClient" value="${esc(d.client||'')}" placeholder="例：Curioさま"></div>
       <div class="field"><label>種別</label><div class="seg" id="pSelf">
         <button data-v="no" class="${d.selfContained?'':'on'}">先方あり（自社/先方レーンを使う）</button>
         <button data-v="yes" class="${d.selfContained?'on':''}">自社完結</button></div></div>
@@ -997,7 +1000,7 @@ function editProject(id){
   segBind('#pSelf',v=>d.selfContained=(v==='yes'));
   $('#mClose').onclick=$('#pCancel').onclick=closeModal;
   $('#pDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('プロジェクトを削除しますか？（タスク・カードも削除されます）')){state.projects=state.projects.filter(x=>x.id!==id);state.tasks=state.tasks.filter(t=>t.projectId!==id);state.cards=state.cards.filter(c=>c.projectId!==id);generateSchedule();save();closeModal();renderNav();switchView('today');}};
-  $('#pSave').onclick=()=>{d.name=$('#pName').value.trim()||'（無題）';d.deadline=$('#pDead').value||'';
+  $('#pSave').onclick=()=>{d.name=$('#pName').value.trim()||'（無題）';d.deadline=$('#pDead').value||'';d.client=$('#pClient').value.trim();
     if(isNew)state.projects.push(d);else{const i=state.projects.findIndex(x=>x.id===id);state.projects[i]=d;}
     save();closeModal();renderNav();if(isNew)openProject(d.id);else renderProject();toast('保存しました');};
 }
@@ -1605,30 +1608,41 @@ function rec_gran(){return RECPAPER[state.ui.gran];}
 
 /* ---- text export of the schedule (for pasting into emails/chat to clients) ---- */
 function fmtRange(s,e){return s===e?fmtJ(s):`${fmtJ(s)}〜${fmtJ(e)}`;}
+// lane tag: 先方系レーンでプロジェクトに取引先名があればその名前を使う
+function laneTag(card){const ln=lane(card.laneId),p=proj(card.projectId);if(ln&&ln.kind==='client'&&p&&p.client)return p.client;return ln?ln.name:'';}
+function cardLine(c,withProject){
+  const p=proj(c.projectId);
+  const seg=[fmtRange(c.start,c.end)];
+  if(withProject)seg.push(p?p.name:'');
+  seg.push(c.label);
+  seg.push(`[${laneTag(c)}]`);
+  if(c.summary)seg.push(c.summary);
+  return seg.join('｜');
+}
 function generateScheduleText(opt){
   const ids=opt.scope==='filter'?activeFilterProjects():state.projects.map(p=>p.id);
   const projs=state.projects.filter(p=>ids.includes(p.id));
   const now=new Date();
   const out=[];
-  out.push(`■ スケジュール（${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 時点）`);
+  out.push(`スケジュール（${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 時点）`);
   out.push('');
   if(opt.group==='date'){
     const cards=state.cards.filter(c=>ids.includes(c.projectId)).slice().sort((a,b)=>a.start.localeCompare(b.start)||a.end.localeCompare(b.end));
     if(!cards.length)out.push('（予定はありません）');
-    cards.forEach(c=>{const p=proj(c.projectId),ln=lane(c.laneId);out.push(`${fmtRange(c.start,c.end)}  [${p?p.name:''}${ln?' / '+ln.name:''}] ${c.label}${c.summary?'  ※'+c.summary:''}`);});
+    cards.forEach(c=>out.push(cardLine(c,true)));
     if(opt.includeTasks){
       const ts=state.tasks.filter(t=>ids.includes(t.projectId)&&t.deadline&&t.status!=='done').slice().sort((a,b)=>a.deadline.localeCompare(b.deadline));
-      if(ts.length){out.push('');out.push('〈締切〉');ts.forEach(t=>{const p=proj(t.projectId);out.push(`${fmtJ(t.deadline)}  [${p?p.name:''}] ${t.name}`);});}
+      if(ts.length){out.push('');out.push('〈締切〉');ts.forEach(t=>{const p=proj(t.projectId);out.push(`${fmtJ(t.deadline)}｜${p?p.name:''}｜${t.name}`);});}
     }
   }else{
     projs.forEach(p=>{
-      out.push(`■ ${p.name}${p.deadline?`  最終締切 ${fmtJ(p.deadline)}`:''}`);
+      out.push(`■${p.name}${opt.showDeadline&&p.deadline?`（最終締切 ${fmtJ(p.deadline)}）`:''}`);
       const cards=state.cards.filter(c=>c.projectId===p.id).slice().sort((a,b)=>a.start.localeCompare(b.start));
-      if(!cards.length)out.push('  （予定カードなし）');
-      cards.forEach(c=>{const ln=lane(c.laneId);out.push(`  [${ln?ln.name:''}] ${c.label}  ${fmtRange(c.start,c.end)}${c.summary?'  ※'+c.summary:''}`);});
+      if(!cards.length)out.push('（予定カードなし）');
+      cards.forEach(c=>out.push(cardLine(c,false)));
       if(opt.includeTasks){
         const ts=state.tasks.filter(t=>t.projectId===p.id&&t.deadline&&t.status!=='done').slice().sort((a,b)=>a.deadline.localeCompare(b.deadline));
-        if(ts.length){out.push('  〈締切〉');ts.forEach(t=>out.push(`    ・${t.name}  ${fmtJ(t.deadline)}`));}
+        if(ts.length){out.push('〈締切〉');ts.forEach(t=>out.push(`${fmtJ(t.deadline)}｜${t.name}`));}
       }
       out.push('');
     });
@@ -1636,7 +1650,7 @@ function generateScheduleText(opt){
   return out.join('\n').replace(/\n{3,}/g,'\n\n').trim()+'\n';
 }
 function openTextModal(){
-  let scope='filter',group='project',includeTasks=false;
+  let scope='filter',group='project',includeTasks=false,showDeadline=false;
   openModal(`
     <div class="mh"><h3>テキスト出力</h3><button class="btn ghost" id="mClose">✕</button></div>
     <div class="mb">
@@ -1644,15 +1658,20 @@ function openTextModal(){
         <div class="seg" id="txScope"><button data-v="filter" class="on">表示中のプロジェクト</button><button data-v="all">全プロジェクト</button></div></div>
       <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">並び：</span>
         <div class="seg" id="txGroup"><button data-v="project" class="on">プロジェクト別</button><button data-v="date">日付順</button></div></div>
-      <div class="field"><label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="txTasks" style="margin-right:6px">タスクの締切も含める</label></div>
+      <div class="field" style="display:flex;gap:20px;flex-wrap:wrap">
+        <label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="txTasks" style="margin-right:6px">タスクの締切も含める</label>
+        <label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="txDead" style="margin-right:6px">プロジェクトの最終締切を表示</label>
+      </div>
+      <div style="font-size:12px;color:var(--sub);margin:-4px 0 12px">「先方」の表示名は、各プロジェクトの設定「取引先名」で変更できます（例：Curioさま）。</div>
       <div class="field"><label>プレビュー（そのままコピーして送れます）</label>
         <textarea id="txOut" readonly style="min-height:300px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;white-space:pre;overflow:auto"></textarea></div>
     </div>
     <div class="mf"><span style="font-size:12px;color:var(--sub)" id="txMsg"></span>
       <div style="display:flex;gap:8px"><button class="btn" id="txDl">.txt保存</button><button class="btn pri" id="txCopy">コピー</button></div></div>`,'wide');
-  const render=()=>{$('#txOut').value=generateScheduleText({scope,group,includeTasks});};
+  const render=()=>{$('#txOut').value=generateScheduleText({scope,group,includeTasks,showDeadline});};
   segBind('#txScope',v=>{scope=v;render();});segBind('#txGroup',v=>{group=v;render();});
   $('#txTasks').onchange=e=>{includeTasks=e.target.checked;render();};
+  $('#txDead').onchange=e=>{showDeadline=e.target.checked;render();};
   $('#mClose').onclick=closeModal;
   $('#txCopy').onclick=async()=>{
     const t=$('#txOut').value;
