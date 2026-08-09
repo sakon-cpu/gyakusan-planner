@@ -235,6 +235,14 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .calcard:hover .rz i{opacity:1}
 .calcard.dragging{opacity:.85;z-index:50;cursor:grabbing;box-shadow:0 10px 26px rgba(10,15,30,.35);transform:scale(1.02)}
 .calcard.dim{opacity:.18}
+/* drag: source stays as a faint placeholder, a translucent ghost follows the cursor */
+.calcard.dragsource{opacity:.25!important;box-shadow:none!important;filter:saturate(.7)}
+.dragghost{position:fixed;z-index:9999;pointer-events:none;opacity:.8;border-radius:8px;color:#fff;font-weight:700;
+  padding:3px 7px;box-shadow:0 12px 30px rgba(10,15,30,.4);overflow:hidden;display:flex;flex-direction:column;gap:1px;
+  border:1px solid rgba(255,255,255,.6);transform:rotate(.4deg)}
+.dragghost .lbl{font-size:11px;line-height:1.15}
+.dragghost .sm{font-size:9.5px;opacity:.9}
+.dragghost.client{background:#fff5f5!important;color:#c2383c;border:2px dashed rgba(229,72,77,.8)}
 /* dense views: shrink label so short (single-day) cards never clip text */
 .months.g-3month .calcard{padding:2px 5px}
 .months.g-3month .calcard .lbl{font-size:9.5px;line-height:1.1}
@@ -1177,55 +1185,65 @@ function attachCardHandlers(el,card,ctx){
 }
 function startDrag(el,card,ctx,mode,ev){
   const {lanes}=ctx;
-  const origStart=card.start,origEnd=card.end,origLane=card.laneId;
-  const startY=ev.clientY, startX=ev.clientX;
-  let active=false; // becomes true only after the pointer actually moves (so click/dblclick still work)
+  const origStart=card.start,origEnd=card.end,origLane=card.laneId,origSpan=daysBetween(origStart,origEnd);
+  const startX=ev.clientX,startY=ev.clientY;
+  const rect=el.getBoundingClientRect();
+  const grabX=ev.clientX-rect.left, grabY=ev.clientY-rect.top; // where within the card we grabbed
+  const gw=rect.width, gh=rect.height;
+  let active=false, ghost=null;
+  const prop={start:origStart,end:origEnd,lane:origLane}; // proposed target (committed on drop)
   const clearHot=()=>{$$('.lc.hot').forEach(x=>x.classList.remove('hot'));};
+  function highlight(){
+    clearHot();
+    let d=parseISO(prop.start);const end=parseISO(prop.end);let g=0;
+    while(d<=end&&g++<500){document.querySelectorAll(`.lc[data-date="${iso(d)}"][data-lane="${prop.lane}"]`).forEach(c=>c.classList.add('hot'));d=addDays(d,1);}
+  }
   function begin(){
     active=true;
-    el.classList.add('dragging');
-    try{el.setPointerCapture(ev.pointerId);}catch(e){}
+    el.classList.add('dragsource'); // keep as faint placeholder
+    if(mode==='move'){
+      ghost=document.createElement('div');
+      ghost.className='dragghost'+(el.classList.contains('client')?' client':'');
+      if(!el.classList.contains('client'))ghost.style.background=projColor(card.projectId);
+      ghost.style.width=gw+'px';ghost.style.height=gh+'px';
+      ghost.innerHTML=el.querySelector('.lbl')?`<div class="lbl">${el.querySelector('.lbl').innerHTML}</div>`:'';
+      const sm=el.querySelector('.sm');if(sm)ghost.innerHTML+=`<div class="sm">${sm.innerHTML}</div>`;
+      document.body.appendChild(ghost);
+    }
   }
+  function moveGhost(e){ if(ghost){ghost.style.left=(e.clientX-grabX)+'px';ghost.style.top=(e.clientY-grabY)+'px';} }
   function hitTest(cx,cy){
     const els=document.elementsFromPoint(cx,cy);
     const lc=els.find(x=>x.classList&&x.classList.contains('lc'));
     if(lc)return {date:lc.dataset.date,lane:lc.dataset.lane};
     const row=els.find(x=>x.classList&&x.classList.contains('dayrow'));
-    if(row)return {date:row.dataset.date,lane:card.laneId};
+    if(row)return {date:row.dataset.date,lane:prop.lane};
     return null;
   }
   function onMove(e){
-    if(!active){
-      if(Math.abs(e.clientX-startX)<4 && Math.abs(e.clientY-startY)<4)return; // below threshold: not a drag yet
-      begin();
-    }
+    if(!active){ if(Math.abs(e.clientX-startX)<4&&Math.abs(e.clientY-startY)<4)return; begin(); }
     e.preventDefault();
-    const hit=hitTest(e.clientX,e.clientY);
-    const dx=e.clientX-startX, dy=e.clientY-startY;
-    el.style.transform=`translate(${mode==='move'?dx:0}px, ${mode==='move'?dy:0}px) scale(1.02)`;
-    clearHot();
+    moveGhost(e);
+    // aim the ghost's grab-point (not the raw cursor) at the grid for accurate snapping
+    const aimX = mode==='move' ? (e.clientX-grabX+12) : e.clientX;
+    const aimY = mode==='move' ? (e.clientY-grabY+10) : e.clientY;
+    const hit=hitTest(aimX,aimY)||hitTest(e.clientX,e.clientY);
     if(hit){
-      const cell=[...document.querySelectorAll(`.lc[data-date="${hit.date}"][data-lane="${hit.lane}"]`)][0];
-      if(cell)cell.classList.add('hot');
-      if(mode==='move'){
-        const span=daysBetween(origStart,origEnd);
-        card.start=hit.date; card.end=iso(addDays(parseISO(hit.date),span));
-        if(lanes.some(l=>l.id===hit.lane))card.laneId=hit.lane;
-      }else if(mode==='top'){
-        if(hit.date<=card.end)card.start=hit.date;
-      }else if(mode==='bottom'){
-        if(hit.date>=card.start)card.end=hit.date;
-      }
+      if(mode==='move'){ prop.start=hit.date; prop.end=iso(addDays(parseISO(hit.date),origSpan)); if(lanes.some(l=>l.id===hit.lane))prop.lane=hit.lane; }
+      else if(mode==='top'){ if(hit.date<=prop.end)prop.start=hit.date; }
+      else if(mode==='bottom'){ if(hit.date>=prop.start)prop.end=hit.date; }
     }
+    highlight();
   }
-  function onUp(e){
+  function onUp(){
     document.removeEventListener('pointermove',onMove);
     document.removeEventListener('pointerup',onUp);
-    if(!active)return; // was a click (or double-click) — leave it to the dblclick handler
-    try{el.releasePointerCapture(ev.pointerId);}catch(e){}
+    if(ghost){ghost.remove();ghost=null;}
+    el.classList.remove('dragsource');
+    if(!active){clearHot();return;} // simple click — let dblclick handle it
     clearHot();
-    el.classList.remove('dragging');el.style.transform='';
-    if(card.start!==origStart||card.end!==origEnd||card.laneId!==origLane){save();toast('予定を移動しました');}
+    const changed=prop.start!==origStart||prop.end!==origEnd||prop.lane!==origLane;
+    if(changed){card.start=prop.start;card.end=prop.end;card.laneId=prop.lane;save();toast('予定を移動しました');}
     renderCalendar();
   }
   document.addEventListener('pointermove',onMove);
