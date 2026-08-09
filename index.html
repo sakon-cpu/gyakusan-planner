@@ -115,6 +115,15 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .pill.mid{background:#fff5e0;color:#b7791f}
 .pill.lo{background:#eef0f4;color:#6b7280}
 .subprog{color:var(--sub);font-size:12px}
+/* nested subtasks in the TODO list (2nd layer, smaller) */
+.trow .subnest{margin-top:9px;padding:8px 10px;display:flex;flex-direction:column;gap:5px;
+  border-left:2px solid var(--line);background:#fafbfe;border-radius:0 8px 8px 0}
+.subnest .sn{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#4b5563}
+.subnest .sn .mc{width:15px;height:15px;border:1.5px solid #c7ccd8;border-radius:4px;flex:0 0 auto;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;background:#fff}
+.subnest .sn .mc.on{background:var(--good);border-color:var(--good)}
+.subnest .sn.done .tx{text-decoration:line-through;color:var(--sub)}
+.subnest .sn .tx{flex:1}
 
 /* task detail modal */
 .modal-bg{position:fixed;inset:0;background:rgba(15,20,35,.42);display:none;align-items:flex-start;justify-content:center;z-index:60;padding:40px 16px;overflow:auto}
@@ -303,6 +312,60 @@ input,select,textarea{font-family:inherit;font-size:14px}
   .monthcol{border:1px solid #cfd3dc}
   .gchip{display:none!important}
 }
+/* ---------- Share banner ---------- */
+#shareBanner{display:none;position:fixed;top:0;left:0;right:0;z-index:200;background:#0f1524;color:#fff;
+  font-size:12.5px;font-weight:600;text-align:center;padding:7px 12px}
+body.shared #main{padding-top:34px}
+
+/* ---------- Quick view (share ①) ---------- */
+#quickView{display:none;position:fixed;inset:0;z-index:300;background:#eceef2;flex-direction:column}
+#quickView.on{display:flex}
+.qbar{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0f1524;color:#fff;flex-wrap:wrap}
+.qtitle{font-weight:800;font-size:14px;max-width:40vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qtabs{display:flex;gap:6px;flex-wrap:wrap}
+.qtabs .qt{display:inline-flex;align-items:center;gap:5px;background:#1a2136;border:1px solid #2a3350;color:#c7cede;border-radius:16px;padding:4px 10px;font-size:12px;font-weight:700}
+.qtabs .qt .dot{width:8px;height:8px;border-radius:50%}
+.qtabs .qt:not(.on){opacity:.45}
+.qspacer{flex:1}
+.qseg{display:inline-flex;border:1px solid #2a3350;border-radius:8px;overflow:hidden}
+.qseg button{border:0;background:#1a2136;color:#c7cede;padding:6px 12px;font-size:12px;font-weight:700;border-right:1px solid #2a3350}
+.qseg button:last-child{border-right:0}
+.qseg button.on{background:var(--accent);color:#fff}
+.qnav{display:inline-flex;align-items:center;gap:4px}
+.qnav button{width:30px;height:30px;border-radius:8px;border:1px solid #2a3350;background:#1a2136;color:#fff;font-size:16px}
+.qnav #qRange{font-size:12px;font-weight:700;min-width:120px;text-align:center}
+.qseg-btn{border:1px solid #2a3350;background:#1a2136;color:#c7cede;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700}
+.qcanvas{flex:1;position:relative;overflow:hidden;touch-action:none;background:
+  radial-gradient(circle at 1px 1px, #d9dce3 1px, transparent 0) 0 0/22px 22px, #eef0f4}
+#qContent{position:absolute;top:0;left:0;transform-origin:top left;will-change:transform;padding:10px}
+#qContent .months{background:transparent}
+#qContent .monthcol{box-shadow:0 6px 22px rgba(15,20,35,.14)}
+.qhint{position:absolute;left:0;right:0;bottom:0;text-align:center;font-size:11px;color:#6b7280;padding:6px;pointer-events:none;
+  background:linear-gradient(transparent,rgba(255,255,255,.85))}
+
+/* ---------- Responsive (mobile) for the full app / detail link ② ---------- */
+@media(max-width:820px){
+  #app{grid-template-columns:1fr}
+  #nav{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;position:sticky;top:0;z-index:50;overflow:visible}
+  #nav .brand{padding:0 8px 0 2px;font-size:15px}
+  #nav .brand small{display:none}
+  #nav .navbtn{width:auto;padding:8px 10px}
+  #nav .sec{display:none}
+  #nav .plist{flex-direction:row;flex-wrap:wrap;width:100%}
+  #nav .prow{border:1px solid #2a3350;border-radius:16px;padding:5px 10px}
+  #nav .addproj{margin-top:0}
+  #nav>div[style*="flex:1"]{display:none}
+  .view{padding:16px 12px 60px}
+  .grid2{grid-template-columns:1fr}
+  .pagehead{align-items:flex-start}
+  .pagehead .tools{width:100%}
+  .calbar{gap:8px}
+  .calwrap{overflow:auto}
+  .months{min-width:680px}
+  .modal{max-width:100%}
+  .setgrid{grid-template-columns:1fr}
+}
+
 .printhead{display:none;justify-content:space-between;align-items:flex-end;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #333}
 .printhead .ph-left{display:flex;flex-direction:column;gap:4px}
 .printhead h2{margin:0;font-size:16px}
@@ -373,6 +436,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
           <button class="btn" id="btnAddCard">＋ 予定（タスク）</button>
           <button class="btn" id="btnShift">⇄ 全体をずらす</button>
           <button class="btn" id="btnText">📝 テキスト出力</button>
+          <button class="btn" id="btnShare">🔗 共有リンク</button>
           <button class="btn" id="btnPrint">🖶 PDF / 印刷</button>
         </div>
       </div>
@@ -474,6 +538,23 @@ input,select,textarea{font-family:inherit;font-size:14px}
 <div class="modal-bg" id="modalBg"><div id="modalHost"></div></div>
 <div class="toast" id="toast"></div>
 
+<!-- 共有ビュー（閲覧専用バナー：詳細リンク=フルアプリ用） -->
+<div id="shareBanner">🔗 共有ビュー（閲覧専用）— 編集しても保存されません</div>
+
+<!-- ①クイック確認ビュー（スマホ最適・ピンチ/ドラッグ・TODOなし） -->
+<div id="quickView">
+  <div class="qbar">
+    <div class="qtitle" id="qTitle">スケジュール</div>
+    <div class="qtabs" id="qTabs"></div>
+    <div class="qspacer"></div>
+    <div class="qseg" id="qGran"><button data-g="1month" class="on">1ヶ月</button><button data-g="3month">3ヶ月</button></div>
+    <div class="qnav"><button id="qPrev">‹</button><span id="qRange"></span><button id="qNext">›</button></div>
+    <button class="qseg-btn" id="qFit">全体表示</button>
+  </div>
+  <div class="qcanvas" id="qCanvas"><div id="qContent"></div></div>
+  <div class="qhint" id="qHint">ピンチで拡大・ドラッグで移動／横向きにすると3ヶ月が全画面で見られます</div>
+</div>
+
 <script>
 "use strict";
 /* =========================================================================
@@ -546,12 +627,14 @@ function holidayName(isoStr){
 
 /* ---------------- State ---------------- */
 let state=null;
+let READONLY=false; // 共有ビュー（閲覧専用）ではローカル保存しない＝閲覧者の自分のデータを汚さない
 const KEY='gyakusan_v1';
 /* ---- history (undo/redo, up to 10) ---- */
 const HIST={past:[],future:[]};
 let _lastSerialized=null,_histBase=null,_histTimer=null;
 const HIST_MAX=10;
 function save(){
+  if(READONLY)return; // 共有ビューでは保存しない
   localStorage.setItem(KEY,JSON.stringify(state));
   // coalesce a burst of saves (e.g. edit + auto re-plan) into a single undo step
   if(_histBase==null)_histBase=_lastSerialized;
@@ -895,18 +978,32 @@ function nextHint(t){
 function taskRow(t){
   const done=t.status==='done';
   const row=document.createElement('div');row.className='trow'+(done?' done':'');
-  const sc=t.subtasks.length?`${t.subtasks.filter(s=>s.done).length}/${t.subtasks.length} サブ`:'';
+  const total=t.subtasks.length, dn=t.subtasks.filter(s=>s.done).length;
+  const ln=lane(t.laneId);const sideName=ln?ln.name:(t.side==='client'?'先方':'自社');
+  const period=(t.start&&t.end)?`🗓 ${t.start===t.end?fmtJ(t.start):fmtRange(t.start,t.end)}`:'';
   row.innerHTML=`<div class="chk ${done?'done':''}">${done?'✓':''}</div>
     <div class="body"><div class="nm">${esc(t.name)}</div>
     <div class="sub">
-      ${t.deadline?`<span>📅 ${fmtJ(t.deadline)}</span>`:''}
-      <span class="pill ${t.side}">${t.side==='self'?'自社':'先方'}</span>
+      ${t.deadline?`<span>📅 締切 ${fmtJ(t.deadline)}</span>`:''}
+      ${period?`<span>${period}</span>`:''}
+      <span class="pill ${t.side}">${esc(sideName)}</span>
       <span class="pill ${t.priority}">${{hi:'優先度 高',mid:'中',lo:'低'}[t.priority]}</span>
       <span>${minToHM(t.estMin)}</span>
-      ${sc?`<span class="subprog">☑ ${sc}</span>`:''}
-    </div></div>`;
+      ${total?`<span class="subprog">☑ ${dn}/${total}</span>`:''}
+    </div>
+    ${total?`<div class="subnest"></div>`:''}
+    </div>`;
   row.querySelector('.chk').onclick=e=>{e.stopPropagation();t.status=done?'todo':'done';save();generateSchedule();renderProject();renderNav();if(current==='inbox')renderInbox();};
   row.onclick=()=>openTask(t.id);
+  if(total){
+    const nest=row.querySelector('.subnest');
+    t.subtasks.forEach(s=>{
+      const el=document.createElement('div');el.className='sn'+(s.done?' done':'');
+      el.innerHTML=`<span class="mc ${s.done?'on':''}">${s.done?'✓':''}</span><span class="tx">${esc(s.text)}</span>`;
+      el.querySelector('.mc').onclick=e=>{e.stopPropagation();if(READONLY)return;s.done=!s.done;save();renderProject();renderNav();};
+      nest.appendChild(el);
+    });
+  }
   return row;
 }
 function fmtJ(isoStr){const d=parseISO(isoStr);return `${d.getMonth()+1}/${d.getDate()}(${WK[d.getDay()]})`;}
@@ -1161,7 +1258,7 @@ function renderCalendar(){
           ${showSummary&&card.summary?`<div class="sm">${esc(card.summary)}</div>`:''}
           <div class="rz b"><i></i></div>`;
         el.dataset.cardId=card.id;
-        attachCardHandlers(el,card,{col,lanes,H,grid,layer,mc});
+        if(READONLY)el.style.cursor='default'; else attachCardHandlers(el,card,{col,lanes,H,grid,layer,mc});
         layer.appendChild(el);
       });
     });
@@ -1756,6 +1853,128 @@ function doPrint(paper,fit,title){
 }
 
 /* ======================================================================
+   SHARE (limited links: ① quick calendar viewer  ② full app)  — static, snapshot in URL
+   ====================================================================== */
+function b64urlEncode(str){return btoa(unescape(encodeURIComponent(str))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function b64urlDecode(s){s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';return decodeURIComponent(escape(atob(s)));}
+function buildShareSnapshot(ids){
+  const projs=state.projects.filter(p=>ids.includes(p.id));
+  const tasks=state.tasks.filter(t=>ids.includes(t.projectId));
+  return {v:1,gen:todayISO(),title:projs.length===1?projs[0].name:'スケジュール',
+    projects:projs,lanes:state.lanes,tasks,holidays:state.settings.customHolidays||[]};
+}
+function shareURL(kind,ids){
+  const data=b64urlEncode(JSON.stringify(buildShareSnapshot(ids)));
+  return location.origin+location.pathname+'#'+(kind==='quick'?'q=':'f=')+data;
+}
+function openShareModal(){
+  const preset=state.ui.filter==='all'?state.projects.map(p=>p.id):(Array.isArray(state.ui.filter)?state.ui.filter.slice():[state.ui.filter]);
+  const sel=new Set(preset.length?preset:state.projects.map(p=>p.id));
+  openModal(`
+    <div class="mh"><h3>共有リンクを発行</h3><button class="btn ghost" id="mClose">✕</button></div>
+    <div class="mb">
+      <div style="color:var(--sub);font-size:12.5px;margin-bottom:12px">選んだプロジェクトのカレンダーを共有できます。リンクには<b>発行時点の内容</b>が埋め込まれます（後で編集したら再発行してください）。相手は閲覧のみ・TODOは①では表示されません。</div>
+      <div class="field"><label>共有するプロジェクト</label><div id="shProjs"></div></div>
+      <div class="field"><label>① クイック確認リンク（スマホ最適・カレンダーだけ）</label>
+        <div style="display:flex;gap:6px"><input type="text" id="shQ" readonly><button class="btn sm" id="shQC">コピー</button></div></div>
+      <div class="field"><label>② 詳細リンク（アプリ本体・PC/スマホ対応・閲覧専用）</label>
+        <div style="display:flex;gap:6px"><input type="text" id="shF" readonly><button class="btn sm" id="shFC">コピー</button></div></div>
+      <div id="shLen" style="font-size:11.5px;color:var(--sub)"></div>
+    </div>
+    <div class="mf"><span></span><div style="display:flex;gap:8px"><button class="btn pri" id="shClose2">閉じる</button></div></div>`);
+  const ph=$('#shProjs');
+  const draw=()=>{ph.innerHTML='';state.projects.forEach(p=>{const on=sel.has(p.id);const el=document.createElement('label');el.className='holitem';el.style.cursor='pointer';el.innerHTML=`<input type="checkbox" ${on?'checked':''}><span class="dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color};margin:0 8px"></span><span style="flex:1">${esc(p.name)}</span>`;el.querySelector('input').onchange=e=>{if(e.target.checked)sel.add(p.id);else sel.delete(p.id);refresh();};ph.appendChild(el);});};
+  const refresh=()=>{const ids=[...sel];if(!ids.length){$('#shQ').value='';$('#shF').value='';$('#shLen').textContent='プロジェクトを1つ以上選んでください';return;}const q=shareURL('quick',ids),f=shareURL('full',ids);$('#shQ').value=q;$('#shF').value=f;$('#shLen').textContent=`リンク長: 約${Math.max(q.length,f.length).toLocaleString()}文字${q.length>8000?'（長め：予定が多い場合はプロジェクトを分けると短くなります）':''}`;};
+  const copy=async(sel2,btn)=>{const v=$(sel2).value;if(!v)return;try{await navigator.clipboard.writeText(v);btn.textContent='コピー済';}catch(e){$(sel2).select();try{document.execCommand('copy');btn.textContent='コピー済';}catch(_){}}setTimeout(()=>btn.textContent='コピー',1500);};
+  $('#shQC').onclick=()=>copy('#shQ',$('#shQC'));$('#shFC').onclick=()=>copy('#shF',$('#shFC'));
+  $('#mClose').onclick=$('#shClose2').onclick=closeModal;
+  draw();refresh();
+}
+
+/* ---- entering share mode from a #q= / #f= link ---- */
+let QUICK={scale:1,tx:0,ty:0,pointers:new Map(),lastDist:0,lastMid:null};
+function tryEnterShare(){
+  const h=location.hash||'';let kind=null,payload=null;
+  if(h.startsWith('#q=')){kind='quick';payload=h.slice(3);}
+  else if(h.startsWith('#f=')){kind='full';payload=h.slice(3);}
+  if(!payload)return null;
+  let data;try{data=JSON.parse(b64urlDecode(payload));}catch(e){return null;}
+  if(!data||!Array.isArray(data.projects))return null;
+  READONLY=true;
+  const now=new Date();
+  state={settings:{workStart:'10:00',workEnd:'22:00',useWeekend:false,customHolidays:data.holidays||[],dailyCap:180},
+    google:{clientId:'',busyCalendars:[],useForPlanning:false},blocks:[],
+    lanes:data.lanes||[],projects:data.projects||[],tasks:data.tasks||[],
+    ui:{gran:kind==='quick'?'1month':'3month',anchor:iso(new Date(now.getFullYear(),now.getMonth(),1)),filter:'all',calDay:todayISO()}};
+  return {kind,data};
+}
+function enterQuickView(data){
+  document.getElementById('app').style.display='none';
+  const qv=$('#quickView');qv.classList.add('on');
+  $('#qTitle').textContent=data.title||'スケジュール';
+  // project tabs
+  const tabs=$('#qTabs');tabs.innerHTML='';
+  const sel=new Set(state.projects.map(p=>p.id));
+  const redrawTabs=()=>{tabs.innerHTML='';state.projects.forEach(p=>{const on=sel.has(p.id);const el=document.createElement('button');el.className='qt'+(on?' on':'');el.innerHTML=`<span class="dot" style="background:${p.color}"></span>${esc(p.name)}`;el.onclick=()=>{if(sel.has(p.id))sel.delete(p.id);else sel.add(p.id);if(!sel.size)sel.add(p.id);state.ui.filter=(sel.size===state.projects.length)?'all':[...sel];redrawTabs();renderQuick(false);};tabs.appendChild(el);});};
+  redrawTabs();
+  // relocate the calendar months node into the gesture canvas
+  const months=$('#calMonths');$('#qContent').appendChild(months);
+  $$('#qGran button').forEach(b=>b.onclick=()=>{$$('#qGran button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.ui.gran=b.dataset.g;renderQuick(true);});
+  $('#qPrev').onclick=()=>{qStep(-1);};$('#qNext').onclick=()=>{qStep(1);};
+  $('#qFit').onclick=()=>fitQuick();
+  setupQuickGestures();
+  window.addEventListener('resize',()=>fitQuick());
+  window.addEventListener('orientationchange',()=>setTimeout(fitQuick,300));
+  renderQuick(true);
+}
+function qStep(dir){const a=parseISO(state.ui.anchor);a.setMonth(a.getMonth()+(state.ui.gran==='3month'?3:1)*dir);state.ui.anchor=iso(new Date(a.getFullYear(),a.getMonth(),1));renderQuick(true);}
+function renderQuick(refit){
+  const c=$('#qContent');
+  c.style.width=(state.ui.gran==='3month'?1080:380)+'px';
+  renderCalendar(); // READONLY → no handlers; fills #calMonths inside qContent
+  $('#qRange').textContent=$('#calRange').textContent;
+  if(refit)fitQuick();else applyQuick();
+}
+function fitQuick(){
+  const cv=$('#qCanvas');const vw=cv.clientWidth-20,vh=cv.clientHeight-20;
+  const c=$('#qContent');const w=c.scrollWidth,hh=c.scrollHeight;
+  if(!w||!hh)return;
+  const s=Math.min(vw/w,vh/hh);
+  QUICK.scale=Math.max(0.15,Math.min(s,4));
+  QUICK.tx=Math.max(10,(cv.clientWidth-w*QUICK.scale)/2);
+  QUICK.ty=Math.max(10,(cv.clientHeight-hh*QUICK.scale)/2);
+  applyQuick();
+}
+function applyQuick(){$('#qContent').style.transform=`translate(${QUICK.tx}px,${QUICK.ty}px) scale(${QUICK.scale})`;}
+function setupQuickGestures(){
+  const cv=$('#qCanvas');
+  const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  const mid=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+  cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);QUICK.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});QUICK.lastDist=0;});
+  cv.addEventListener('pointermove',e=>{
+    if(!QUICK.pointers.has(e.pointerId))return;
+    const prev=QUICK.pointers.get(e.pointerId);const cur={x:e.clientX,y:e.clientY};QUICK.pointers.set(e.pointerId,cur);
+    const pts=[...QUICK.pointers.values()];
+    if(pts.length===1){QUICK.tx+=cur.x-prev.x;QUICK.ty+=cur.y-prev.y;applyQuick();}
+    else if(pts.length>=2){
+      const a=pts[0],b=pts[1];const d=dist(a,b);const m=mid(a,b);
+      if(QUICK.lastDist){const rect=cv.getBoundingClientRect();const mx=m.x-rect.left,my=m.y-rect.top;
+        const factor=d/QUICK.lastDist;const ns=Math.max(0.15,Math.min(QUICK.scale*factor,6));
+        // zoom around midpoint
+        QUICK.tx=mx-(mx-QUICK.tx)*(ns/QUICK.scale);QUICK.ty=my-(my-QUICK.ty)*(ns/QUICK.scale);QUICK.scale=ns;applyQuick();}
+      QUICK.lastDist=d;
+    }
+  });
+  const up=e=>{QUICK.pointers.delete(e.pointerId);QUICK.lastDist=0;};
+  cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+  cv.addEventListener('wheel',e=>{e.preventDefault();const rect=cv.getBoundingClientRect();const mx=e.clientX-rect.left,my=e.clientY-rect.top;
+    if(e.ctrlKey){const ns=Math.max(0.15,Math.min(QUICK.scale*(e.deltaY<0?1.1:0.9),6));QUICK.tx=mx-(mx-QUICK.tx)*(ns/QUICK.scale);QUICK.ty=my-(my-QUICK.ty)*(ns/QUICK.scale);QUICK.scale=ns;}
+    else{QUICK.tx-=e.deltaX;QUICK.ty-=e.deltaY;}
+    applyQuick();
+  },{passive:false});
+}
+
+/* ======================================================================
    WIRING
    ====================================================================== */
 function wire(){
@@ -1768,6 +1987,7 @@ function wire(){
   $('#btnAddCard').onclick=()=>editCard(null);
   $('#btnShift').onclick=openShiftModal;
   $('#btnText').onclick=openTextModal;
+  $('#btnShare').onclick=openShareModal;
   $('#btnPrint').onclick=openPrintModal;
   $('#calPrev').onclick=()=>calStep(-1);
   $('#calNext').onclick=()=>calStep(1);
@@ -1804,12 +2024,23 @@ function wire(){
 }
 
 /* ---------------- boot ---------------- */
-load();
-ensureSchedule();
-snapshotInit();
-wire();
-renderNav();
-switchView('today');
+const _share=tryEnterShare();
+if(_share){
+  if(_share.kind==='quick'){
+    enterQuickView(_share.data);
+  }else{ // ② 詳細リンク：フルアプリ（閲覧専用・レスポンシブ）
+    document.body.classList.add('shared');
+    $('#shareBanner').style.display='block';
+    wire();renderNav();switchView('calendar');
+  }
+}else{
+  load();
+  ensureSchedule();
+  snapshotInit();
+  wire();
+  renderNav();
+  switchView('today');
+}
 </script>
 </body>
 </html>
