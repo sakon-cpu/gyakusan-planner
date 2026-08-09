@@ -370,6 +370,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
         <div class="tools">
           <button class="btn" id="btnAddCard">＋ 予定カード</button>
           <button class="btn" id="btnShift">⇄ 全体をずらす</button>
+          <button class="btn" id="btnText">📝 テキスト出力</button>
           <button class="btn" id="btnPrint">🖶 PDF / 印刷</button>
         </div>
       </div>
@@ -1602,6 +1603,66 @@ function renderPrintPreview(paper,fit,title){
 }
 function rec_gran(){return RECPAPER[state.ui.gran];}
 
+/* ---- text export of the schedule (for pasting into emails/chat to clients) ---- */
+function fmtRange(s,e){return s===e?fmtJ(s):`${fmtJ(s)}〜${fmtJ(e)}`;}
+function generateScheduleText(opt){
+  const ids=opt.scope==='filter'?activeFilterProjects():state.projects.map(p=>p.id);
+  const projs=state.projects.filter(p=>ids.includes(p.id));
+  const now=new Date();
+  const out=[];
+  out.push(`■ スケジュール（${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 時点）`);
+  out.push('');
+  if(opt.group==='date'){
+    const cards=state.cards.filter(c=>ids.includes(c.projectId)).slice().sort((a,b)=>a.start.localeCompare(b.start)||a.end.localeCompare(b.end));
+    if(!cards.length)out.push('（予定はありません）');
+    cards.forEach(c=>{const p=proj(c.projectId),ln=lane(c.laneId);out.push(`${fmtRange(c.start,c.end)}  [${p?p.name:''}${ln?' / '+ln.name:''}] ${c.label}${c.summary?'  ※'+c.summary:''}`);});
+    if(opt.includeTasks){
+      const ts=state.tasks.filter(t=>ids.includes(t.projectId)&&t.deadline&&t.status!=='done').slice().sort((a,b)=>a.deadline.localeCompare(b.deadline));
+      if(ts.length){out.push('');out.push('〈締切〉');ts.forEach(t=>{const p=proj(t.projectId);out.push(`${fmtJ(t.deadline)}  [${p?p.name:''}] ${t.name}`);});}
+    }
+  }else{
+    projs.forEach(p=>{
+      out.push(`■ ${p.name}${p.deadline?`  最終締切 ${fmtJ(p.deadline)}`:''}`);
+      const cards=state.cards.filter(c=>c.projectId===p.id).slice().sort((a,b)=>a.start.localeCompare(b.start));
+      if(!cards.length)out.push('  （予定カードなし）');
+      cards.forEach(c=>{const ln=lane(c.laneId);out.push(`  [${ln?ln.name:''}] ${c.label}  ${fmtRange(c.start,c.end)}${c.summary?'  ※'+c.summary:''}`);});
+      if(opt.includeTasks){
+        const ts=state.tasks.filter(t=>t.projectId===p.id&&t.deadline&&t.status!=='done').slice().sort((a,b)=>a.deadline.localeCompare(b.deadline));
+        if(ts.length){out.push('  〈締切〉');ts.forEach(t=>out.push(`    ・${t.name}  ${fmtJ(t.deadline)}`));}
+      }
+      out.push('');
+    });
+  }
+  return out.join('\n').replace(/\n{3,}/g,'\n\n').trim()+'\n';
+}
+function openTextModal(){
+  let scope='filter',group='project',includeTasks=false;
+  openModal(`
+    <div class="mh"><h3>テキスト出力</h3><button class="btn ghost" id="mClose">✕</button></div>
+    <div class="mb">
+      <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">対象：</span>
+        <div class="seg" id="txScope"><button data-v="filter" class="on">表示中のプロジェクト</button><button data-v="all">全プロジェクト</button></div></div>
+      <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">並び：</span>
+        <div class="seg" id="txGroup"><button data-v="project" class="on">プロジェクト別</button><button data-v="date">日付順</button></div></div>
+      <div class="field"><label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="txTasks" style="margin-right:6px">タスクの締切も含める</label></div>
+      <div class="field"><label>プレビュー（そのままコピーして送れます）</label>
+        <textarea id="txOut" readonly style="min-height:300px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;white-space:pre;overflow:auto"></textarea></div>
+    </div>
+    <div class="mf"><span style="font-size:12px;color:var(--sub)" id="txMsg"></span>
+      <div style="display:flex;gap:8px"><button class="btn" id="txDl">.txt保存</button><button class="btn pri" id="txCopy">コピー</button></div></div>`,'wide');
+  const render=()=>{$('#txOut').value=generateScheduleText({scope,group,includeTasks});};
+  segBind('#txScope',v=>{scope=v;render();});segBind('#txGroup',v=>{group=v;render();});
+  $('#txTasks').onchange=e=>{includeTasks=e.target.checked;render();};
+  $('#mClose').onclick=closeModal;
+  $('#txCopy').onclick=async()=>{
+    const t=$('#txOut').value;
+    try{await navigator.clipboard.writeText(t);$('#txMsg').textContent='コピーしました';}
+    catch(e){const ta=$('#txOut');ta.focus();ta.select();try{document.execCommand('copy');$('#txMsg').textContent='コピーしました';}catch(_){$('#txMsg').textContent='コピー不可。手動で選択してください';}}
+  };
+  $('#txDl').onclick=()=>{const blob=new Blob([$('#txOut').value],{type:'text/plain;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='スケジュール.txt';a.click();$('#txMsg').textContent='.txtを保存しました';};
+  render();
+}
+
 /* ---- shift entire schedule by N days ---- */
 function openShiftModal(){
   let dir='back', scope='all', shiftDeadlines=true, shiftBlocks=false;
@@ -1674,6 +1735,7 @@ function wire(){
   $('#btnInboxAdd').onclick=()=>openTask(null);
   $('#btnAddCard').onclick=()=>editCard(null);
   $('#btnShift').onclick=openShiftModal;
+  $('#btnText').onclick=openTextModal;
   $('#btnPrint').onclick=openPrintModal;
   $('#calPrev').onclick=()=>calStep(-1);
   $('#calNext').onclick=()=>calStep(1);
