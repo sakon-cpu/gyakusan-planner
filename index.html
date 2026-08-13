@@ -399,6 +399,7 @@ body.shared #main{padding-top:34px}
     <div class="plist" id="navProjects"></div>
     <button class="addproj" id="navAddProj">＋ プロジェクト追加</button>
     <div style="flex:1"></div>
+    <button class="navbtn" id="navCloud"><span class="gcal-dot" id="navCdot" style="margin-right:2px"></span><span id="navCloudLbl">クラウド共有</span></button>
     <button class="navbtn" id="navGoogle"><span class="gcal-dot" id="navGdot" style="margin-right:2px"></span><span id="navGoogleLbl">Googleでログイン</span></button>
     <button class="navbtn" data-view="settings"><span class="ic">⚙</span>設定</button>
   </aside>
@@ -505,6 +506,10 @@ body.shared #main{padding-top:34px}
           <div class="sechead" style="margin-top:22px">2026年の国民の祝日</div>
           <div style="color:var(--sub);font-size:12px">祝日は自動計算されています（振替休日・国民の休日を含む）。</div>
         </div>
+      </div>
+      <div class="card" style="padding:20px;margin-top:20px">
+        <div class="sechead">クラウド共有（リアルタイム）</div>
+        <div id="cloudBox"></div>
       </div>
       <div class="card" style="padding:20px;margin-top:20px">
         <div class="sechead">Google カレンダー連携</div>
@@ -634,7 +639,8 @@ const HIST={past:[],future:[]};
 let _lastSerialized=null,_histBase=null,_histTimer=null;
 const HIST_MAX=10;
 function save(){
-  if(READONLY)return; // 共有ビューでは保存しない
+  if(typeof CLOUD!=='undefined'&&CLOUD.active&&CLOUD.canEdit&&!CLOUD.applying)pushCloud();
+  if(READONLY)return; // 共有ビュー（閲覧専用）ではローカル保存しない
   localStorage.setItem(KEY,JSON.stringify(state));
   // coalesce a burst of saves (e.g. edit + auto re-plan) into a single undo step
   if(_histBase==null)_histBase=_lastSerialized;
@@ -867,13 +873,18 @@ function renderNav(){
   });
   const ic=$('#inboxcount');const n=state.tasks.filter(t=>!t.projectId&&t.status!=='done').length;
   ic.textContent=n?`(${n})`:'';
-  updateGoogleNav();
+  updateGoogleNav();updateCloudNav();
 }
 function updateGoogleNav(){
   const dot=$('#navGdot'),lbl=$('#navGoogleLbl');if(!dot)return;
   const on=gTokenValid();
   dot.classList.toggle('on',on);
   lbl.textContent=on?'Google 接続中':'Googleでログイン';
+}
+function updateCloudNav(){
+  const dot=$('#navCdot'),lbl=$('#navCloudLbl');if(!dot)return;
+  dot.classList.toggle('on',!!CLOUD.active);
+  lbl.textContent=CLOUD.active?(CLOUD.canEdit?'クラウド共有 中(編集可)':'クラウド共有 中'):'クラウド共有';
 }
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
@@ -1469,6 +1480,14 @@ function calStep(dir){
 /* ======================================================================
    GOOGLE CALENDAR (client-side, GIS token flow + Calendar REST)
    ====================================================================== */
+const FIREBASE_CONFIG={
+  apiKey:"AIzaSyBn2n7r6mG6CQ23MVh1aKAP10o1ELM5Nbw",
+  authDomain:"gyakusan-a84ce.firebaseapp.com",
+  projectId:"gyakusan-a84ce",
+  storageBucket:"gyakusan-a84ce.firebasestorage.app",
+  messagingSenderId:"678464869621",
+  appId:"1:678464869621:web:210600ebfe2a971c5c21bc"
+};
 const BAKED_CLIENT_ID='683079998931-8bp3k6gou8n0668c2su4istisggpetal.apps.googleusercontent.com';
 function effClientId(){return ((state.google&&state.google.clientId)||BAKED_CLIENT_ID||'').trim();}
 let GTOKEN=null, GTOKEN_EXP=0, GTOKENCLIENT=null, GCALS=[];
@@ -1613,7 +1632,43 @@ function renderGoogleSettings(){
     });
   }
 }
+function renderCloudSettings(){
+  const box=$('#cloudBox');if(!box)return;
+  const signedIn=CLOUD.user&&CLOUD.user.email;
+  const published=CLOUD.active&&CLOUD.wid;
+  const isOwner=signedIn&&CLOUD.owner&&CLOUD.user.email===CLOUD.owner;
+  let h='';
+  h+=`<div style="font-size:12.5px;color:var(--sub);margin-bottom:12px">公開すると、共有リンクを開いた全員に<b>常に最新</b>が表示されます。編集できるのは<b>オーナーと許可したメール</b>だけ、他は閲覧専用です。</div>`;
+  h+=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span class="gcal-dot ${signedIn?'on':''}"></span><span style="font-size:13px;font-weight:600">${signedIn?('ログイン中: '+esc(CLOUD.user.email)):'未ログイン'}</span></div>`;
+  h+=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">`;
+  if(!signedIn)h+=`<button class="btn pri" id="cloLogin">Googleでログイン</button>`;
+  else h+=`<button class="btn" id="cloLogout">ログアウト</button>`;
+  if(!published)h+=`<button class="btn pri" id="cloPublish">このデータをクラウドに公開</button>`;
+  else h+=`<button class="btn" id="cloUnpub">共有を停止（ローカルに戻す）</button>`;
+  h+=`</div>`;
+  if(published){
+    h+=`<div style="font-size:12px;color:var(--sub);margin-bottom:6px">状態: <b style="color:var(--good)">公開中</b>　オーナー: ${esc(CLOUD.owner||'-')}${CLOUD.canEdit?'　/ あなたは<b>編集可</b>':'　/ あなたは閲覧のみ'}</div>`;
+    if(isOwner){
+      h+=`<div class="sechead" style="margin:14px 0 6px">編集を許可するメール</div>`;
+      h+=`<div id="edList"></div>`;
+      h+=`<div class="addline"><input type="email" id="edNew" placeholder="メールアドレスを入力してEnter（例：member@example.com）"></div>`;
+      h+=`<div style="font-size:11.5px;color:var(--sub);margin-top:6px">追加した人がその共有リンクを開き、同じメールのGoogleでログインすると編集できます。</div>`;
+    }
+  }
+  box.innerHTML=h;
+  if($('#cloLogin'))$('#cloLogin').onclick=async()=>{await cloudSignIn();renderCloudSettings();};
+  if($('#cloLogout'))$('#cloLogout').onclick=()=>cloudSignOut();
+  if($('#cloPublish'))$('#cloPublish').onclick=()=>cloudPublish();
+  if($('#cloUnpub'))$('#cloUnpub').onclick=()=>cloudUnpublish();
+  if(isOwner){
+    const el=$('#edList');el.innerHTML='';
+    (CLOUD.editors||[]).forEach(em=>{const r=document.createElement('div');r.className='holitem';r.innerHTML=`<span style="flex:1">${esc(em)}</span><button class="btn ghost sm" style="color:var(--danger)">削除</button>`;r.querySelector('button').onclick=()=>cloudSetEditors(CLOUD.editors.filter(x=>x!==em));el.appendChild(r);});
+    if(!CLOUD.editors.length)el.innerHTML='<div style="color:var(--sub);font-size:12px">まだ許可メールはありません（オーナーのみ編集可）。</div>';
+    const ne=$('#edNew');if(ne)ne.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.value.trim()){const em=e.target.value.trim().toLowerCase();if(!CLOUD.editors.includes(em))cloudSetEditors([...CLOUD.editors,em]);e.target.value='';}});
+  }
+}
 function renderSettings(){
+  renderCloudSettings();
   $('#setWorkStart').value=state.settings.workStart;
   $('#setWorkEnd').value=state.settings.workEnd;
   $('#setCap').value=String(state.settings.dailyCap||180);
@@ -1884,7 +1939,12 @@ function openShareModal(){
     <div class="mf"><span></span><div style="display:flex;gap:8px"><button class="btn pri" id="shClose2">閉じる</button></div></div>`);
   const ph=$('#shProjs');
   const draw=()=>{ph.innerHTML='';state.projects.forEach(p=>{const on=sel.has(p.id);const el=document.createElement('label');el.className='holitem';el.style.cursor='pointer';el.innerHTML=`<input type="checkbox" ${on?'checked':''}><span class="dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color};margin:0 8px"></span><span style="flex:1">${esc(p.name)}</span>`;el.querySelector('input').onchange=e=>{if(e.target.checked)sel.add(p.id);else sel.delete(p.id);refresh();};ph.appendChild(el);});};
-  const refresh=()=>{const ids=[...sel];if(!ids.length){$('#shQ').value='';$('#shF').value='';$('#shLen').textContent='プロジェクトを1つ以上選んでください';return;}const q=shareURL('quick',ids),f=shareURL('full',ids);$('#shQ').value=q;$('#shF').value=f;$('#shLen').textContent=`リンク長: 約${Math.max(q.length,f.length).toLocaleString()}文字${q.length>8000?'（長め：予定が多い場合はプロジェクトを分けると短くなります）':''}`;};
+  const live=CLOUD.active&&CLOUD.wid;
+  const liveURL=(quick,ids)=>{const base=location.origin+location.pathname+'#w='+encodeURIComponent(CLOUD.wid);const parts=[];if(quick)parts.push('view=quick');if(ids&&ids.length&&ids.length<state.projects.length)parts.push('only='+ids.join(','));return base+(parts.length?'&'+parts.join('&'):'');};
+  const refresh=()=>{const ids=[...sel];if(!ids.length){$('#shQ').value='';$('#shF').value='';$('#shLen').textContent='プロジェクトを1つ以上選んでください';return;}
+    if(live){$('#shQ').value=liveURL(true,ids);$('#shF').value=liveURL(false,ids);$('#shLen').innerHTML='<b style="color:var(--good)">ライブリンク</b>：開いた全員に常に最新が表示されます（編集は許可メアドのみ）。';}
+    else{const q=shareURL('quick',ids),f=shareURL('full',ids);$('#shQ').value=q;$('#shF').value=f;$('#shLen').innerHTML=`スナップショット（発行時点の内容）。<b>リアルタイムにするには</b> 設定→クラウド共有で「公開」してください。`;}
+  };
   const copy=async(sel2,btn)=>{const v=$(sel2).value;if(!v)return;try{await navigator.clipboard.writeText(v);btn.textContent='コピー済';}catch(e){$(sel2).select();try{document.execCommand('copy');btn.textContent='コピー済';}catch(_){}}setTimeout(()=>btn.textContent='コピー',1500);};
   $('#shQC').onclick=()=>copy('#shQ',$('#shQC'));$('#shFC').onclick=()=>copy('#shF',$('#shFC'));
   $('#mClose').onclick=$('#shClose2').onclick=closeModal;
@@ -1975,12 +2035,126 @@ function setupQuickGestures(){
 }
 
 /* ======================================================================
+   CLOUD (Firebase Firestore + Auth) — realtime shared workspace
+   閲覧は全員 / 編集はオーナー＋許可メアドのみ（Firestoreルールで強制）
+   ====================================================================== */
+const WSKEY='gyakusan_wsid';
+const CLOUD={ready:false,fail:false,app:null,db:null,auth:null,fs:null,au:null,
+  user:null,wid:null,owner:null,editors:[],canEdit:false,active:false,shareView:null,
+  applying:false,lastRemote:null,lastPush:null,pushTimer:null,onReady:null};
+const FBVER='10.12.5';
+async function initFirebase(){
+  if(CLOUD.ready||CLOUD.fail)return CLOUD.ready;
+  try{
+    const [appMod,authMod,fsMod]=await Promise.all([
+      import(`https://www.gstatic.com/firebasejs/${FBVER}/firebase-app.js`),
+      import(`https://www.gstatic.com/firebasejs/${FBVER}/firebase-auth.js`),
+      import(`https://www.gstatic.com/firebasejs/${FBVER}/firebase-firestore.js`)
+    ]);
+    CLOUD.app=appMod.initializeApp(FIREBASE_CONFIG);
+    CLOUD.au=authMod; CLOUD.fs=fsMod;
+    CLOUD.auth=authMod.getAuth(CLOUD.app);
+    CLOUD.db=fsMod.getFirestore(CLOUD.app);
+    CLOUD.ready=true;
+    authMod.onAuthStateChanged(CLOUD.auth,u=>{CLOUD.user=u?{email:u.email,name:u.displayName}:null;recomputeCanEdit();
+      if(CLOUD.user&&CLOUD.pendingWid&&!CLOUD.active)cloudSubscribe(CLOUD.pendingWid);
+      if(current==='settings')renderCloudSettings();});
+    return true;
+  }catch(e){console.error('Firebase init failed',e);CLOUD.fail=true;return false;}
+}
+function cloudSubset(){return {projects:state.projects,lanes:state.lanes,tasks:state.tasks,
+  settings:{customHolidays:state.settings.customHolidays,workStart:state.settings.workStart,workEnd:state.settings.workEnd,useWeekend:state.settings.useWeekend,dailyCap:state.settings.dailyCap}};}
+function applyCloudData(data){
+  if(!data)return;
+  CLOUD.applying=true;
+  state.projects=data.projects||[]; state.lanes=data.lanes||[]; state.tasks=data.tasks||[];
+  if(data.settings){Object.assign(state.settings,data.settings);}
+  migrate();
+  CLOUD.applying=false;
+  refreshViews();
+}
+function recomputeCanEdit(){
+  const email=CLOUD.user&&CLOUD.user.email;
+  CLOUD.canEdit=!!(email&&(email===CLOUD.owner||(CLOUD.editors||[]).includes(email)));
+  if(CLOUD.shareView){ READONLY=!CLOUD.canEdit; updateShareBanner(); }
+  updateCloudNav();
+}
+function updateShareBanner(){
+  const b=$('#shareBanner');if(!b)return;
+  if(!CLOUD.shareView){b.style.display='none';return;}
+  b.style.display='block';
+  b.textContent=CLOUD.canEdit?'🟢 共有ワークスペース（あなたは編集可能・変更は全員にリアルタイム反映）':'🔗 共有ビュー（閲覧専用）— 編集するにはオーナーの許可が必要です';
+}
+async function cloudSignIn(){
+  if(!await initFirebase()){toast('クラウドに接続できません（オフライン/未設定）');return null;}
+  try{const p=new CLOUD.au.GoogleAuthProvider();const r=await CLOUD.au.signInWithPopup(CLOUD.auth,p);CLOUD.user={email:r.user.email,name:r.user.displayName};recomputeCanEdit();return CLOUD.user;}
+  catch(e){console.error(e);toast('ログインに失敗しました');return null;}
+}
+async function cloudSignOut(){try{await CLOUD.au.signOut(CLOUD.auth);}catch(e){}CLOUD.user=null;recomputeCanEdit();if(current==='settings')renderCloudSettings();}
+function newWid(){return 'ws-'+Math.random().toString(36).slice(2,8)+Math.random().toString(36).slice(2,6);}
+async function cloudPublish(){
+  if(!await initFirebase()){toast('クラウド未接続');return;}
+  if(!CLOUD.user){const u=await cloudSignIn();if(!u)return;}
+  const wid=localStorage.getItem(WSKEY)||newWid();
+  const ref=CLOUD.fs.doc(CLOUD.db,'workspaces',wid);
+  try{
+    await CLOUD.fs.setDoc(ref,{owner:CLOUD.user.email,editors:[],data:cloudSubset(),updatedBy:CLOUD.user.email,updatedAt:CLOUD.fs.serverTimestamp()},{merge:true});
+    localStorage.setItem(WSKEY,wid);CLOUD.wid=wid;CLOUD.owner=CLOUD.user.email;
+    toast('クラウドに公開しました（リアルタイム共有ON）');
+    cloudSubscribe(wid);recomputeCanEdit();if(current==='settings')renderCloudSettings();
+  }catch(e){console.error(e);toast('公開に失敗（Firestoreルールをご確認ください）');}
+}
+function cloudSubscribe(wid){
+  if(!CLOUD.ready||!wid)return;
+  CLOUD.wid=wid;CLOUD.active=true;
+  const ref=CLOUD.fs.doc(CLOUD.db,'workspaces',wid);
+  CLOUD.fs.onSnapshot(ref,snap=>{
+    if(!snap.exists()){return;}
+    const d=snap.data();
+    CLOUD.owner=d.owner;CLOUD.editors=d.editors||[];recomputeCanEdit();
+    const j=JSON.stringify(d.data||{});
+    if(j===CLOUD.lastPush){return;} // our own write echoed back
+    CLOUD.lastRemote=j;
+    applyCloudData(d.data);
+    if(current==='settings')renderCloudSettings();
+  },err=>{console.error('snapshot',err);toast('共有データの取得に失敗しました');});
+}
+function pushCloud(){
+  if(!CLOUD.active||!CLOUD.canEdit||CLOUD.applying)return;
+  clearTimeout(CLOUD.pushTimer);
+  CLOUD.pushTimer=setTimeout(async()=>{
+    try{const sub=cloudSubset();CLOUD.lastPush=JSON.stringify(sub);
+      const ref=CLOUD.fs.doc(CLOUD.db,'workspaces',CLOUD.wid);
+      await CLOUD.fs.setDoc(ref,{data:sub,updatedBy:CLOUD.user?CLOUD.user.email:'',updatedAt:CLOUD.fs.serverTimestamp()},{merge:true});
+    }catch(e){console.error('push',e);}
+  },500);
+}
+async function cloudSetEditors(list){
+  if(!CLOUD.active||!CLOUD.wid)return;
+  try{const ref=CLOUD.fs.doc(CLOUD.db,'workspaces',CLOUD.wid);await CLOUD.fs.updateDoc(ref,{editors:list});CLOUD.editors=list;recomputeCanEdit();if(current==='settings')renderCloudSettings();toast('編集者を更新しました');}
+  catch(e){console.error(e);toast('更新に失敗（オーナーのみ変更できます）');}
+}
+async function cloudUnpublish(){
+  if(!CLOUD.wid)return;
+  if(!confirm('クラウド共有を停止し、この端末のローカル保存に戻します。よろしいですか？（クラウド上のデータは残ります）'))return;
+  localStorage.removeItem(WSKEY);CLOUD.active=false;CLOUD.wid=null;toast('ローカルモードに戻しました');if(current==='settings')renderCloudSettings();
+}
+function refreshViews(){
+  renderNav();
+  if(CLOUD.shareView==='quick'){renderQuick(false);return;}
+  if(current==='today')renderToday();else if(current==='project')renderProject();
+  else if(current==='calendar')renderCalendar();else if(current==='inbox')renderInbox();
+  else if(current==='settings')renderSettings();
+}
+
+/* ======================================================================
    WIRING
    ====================================================================== */
 function wire(){
   $$('#nav .navbtn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
   $('#navAddProj').onclick=()=>editProject(null);
   $('#navGoogle').onclick=async()=>{if(gTokenValid()){switchView('settings');}else{await gConnect(true);updateGoogleNav();}};
+  $('#navCloud').onclick=()=>switchView('settings');
   $('#btnQuickAdd').onclick=()=>openTask(null);
   $('#btnReplan').onclick=()=>{generateSchedule();renderToday();if(current==='calendar')renderCalendar();toast('締切から逆算して仮組みしました');};
   $('#btnInboxAdd').onclick=()=>openTask(null);
@@ -2024,15 +2198,49 @@ function wire(){
 }
 
 /* ---------------- boot ---------------- */
-const _share=tryEnterShare();
-if(_share){
-  if(_share.kind==='quick'){
-    enterQuickView(_share.data);
-  }else{ // ② 詳細リンク：フルアプリ（閲覧専用・レスポンシブ）
-    document.body.classList.add('shared');
-    $('#shareBanner').style.display='block';
-    wire();renderNav();switchView('calendar');
-  }
+function parseWStr(){ // #w=<wid>&view=quick&only=id1,id2
+  const h=location.hash||'';if(!h.startsWith('#w='))return null;
+  const raw=h.slice(3);const parts=raw.split('&');const wid=decodeURIComponent(parts[0]);
+  const kv={};parts.slice(1).forEach(s=>{const i=s.indexOf('=');if(i>0)kv[s.slice(0,i)]=decodeURIComponent(s.slice(i+1));});
+  return {wid,quick:kv.view==='quick'||kv.q==='1',only:kv.only?kv.only.split(','):null};
+}
+async function bootShareLive(w){
+  // ライブ共有リンク：Firebaseに接続し、リアルタイム購読
+  READONLY=true; CLOUD.shareView=w.quick?'quick':'full';
+  document.body.classList.add('shared');
+  const banner=$('#shareBanner');banner.style.display='block';banner.textContent='共有データを読み込み中…';
+  // 空のstateで初期化（購読の初回スナップショットで埋まる）
+  const now=new Date();
+  state={settings:{workStart:'10:00',workEnd:'22:00',useWeekend:false,customHolidays:[],dailyCap:180},
+    google:{clientId:'',busyCalendars:[],useForPlanning:false},blocks:[],lanes:[],projects:[],tasks:[],
+    ui:{gran:w.quick?'1month':'3month',anchor:iso(new Date(now.getFullYear(),now.getMonth(),1)),filter:'all',calDay:todayISO()}};
+  const ok=await initFirebase();
+  if(!ok){banner.textContent='共有データに接続できませんでした（通信環境をご確認ください）';return;}
+  let entered=false;
+  const ref=CLOUD.fs.doc(CLOUD.db,'workspaces',w.wid);
+  CLOUD.wid=w.wid;CLOUD.active=true;
+  CLOUD.fs.onSnapshot(ref,snap=>{
+    if(!snap.exists()){banner.textContent='共有リンクが見つかりませんでした（停止された可能性）';return;}
+    const d=snap.data();CLOUD.owner=d.owner;CLOUD.editors=d.editors||[];recomputeCanEdit();
+    const j=JSON.stringify(d.data||{});
+    if(j!==CLOUD.lastPush){CLOUD.lastRemote=j;applyCloudData(d.data);}
+    if(w.only&&w.only.length){const valid=w.only.filter(id=>state.projects.some(p=>p.id===id));if(valid.length)state.ui.filter=valid.length===state.projects.length?'all':valid;}
+    if(!entered){
+      entered=true;
+      if(w.quick){enterQuickView({title:'スケジュール'});}
+      else{wire();renderNav();switchView('calendar');}
+      updateShareBanner();
+    }
+  },err=>{console.error(err);banner.textContent='共有データの取得に失敗しました';});
+}
+
+const _wlive=parseWStr();
+const _share=_wlive?null:tryEnterShare();
+if(_wlive){
+  bootShareLive(_wlive);
+}else if(_share){
+  if(_share.kind==='quick'){ enterQuickView(_share.data); }
+  else { document.body.classList.add('shared');$('#shareBanner').style.display='block';CLOUD.shareView='full';wire();renderNav();switchView('calendar'); }
 }else{
   load();
   ensureSchedule();
@@ -2040,6 +2248,9 @@ if(_share){
   wire();
   renderNav();
   switchView('today');
+  // オーナー端末：以前に公開済みなら、ログイン確定後に購読して複数端末リアルタイム
+  const wsid=localStorage.getItem(WSKEY);
+  if(wsid){ CLOUD.pendingWid=wsid; initFirebase(); }
 }
 </script>
 </body>
