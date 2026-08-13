@@ -196,7 +196,8 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .monthcol .mhead{background:#f0f2f7;padding:8px 10px;font-weight:800;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}
 .monthcol .mhead .mo{color:var(--sub);font-weight:600;font-size:11px}
 .lanehdr{display:flex;border-bottom:1px solid var(--line);background:#fafbfe}
-.lanehdr .gut{flex:0 0 46px;border-right:1px solid var(--line)}
+.lanehdr .gut{flex:0 0 48px;border-right:1px solid var(--line)}
+.lanehdrcells{flex:1 1 0;display:flex;min-width:0}
 .lanehdr .lh{flex:1 1 0;text-align:center;font-size:11px;font-weight:700;color:var(--sub);padding:5px 2px;border-right:1px dashed var(--line)}
 .lanehdr .lh:last-child{border-right:0}
 
@@ -212,7 +213,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dayrow .dnum{font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
 .dayrow .dwk{font-size:10px;color:var(--sub)}
 .dayrow .dldot{width:6px;height:6px;border-radius:50%;display:inline-block;box-shadow:0 0 0 1.5px #fff;vertical-align:middle}
-.nowline{position:absolute;left:46px;right:0;height:0;border-top:2px solid var(--danger);z-index:6;pointer-events:none}
+.nowline{position:absolute;left:48px;right:0;height:0;border-top:2px solid var(--danger);z-index:6;pointer-events:none}
 .nowline::before{content:'';position:absolute;left:-4px;top:-4px;width:7px;height:7px;border-radius:50%;background:var(--danger)}
 .dayrow .holname{font-size:8.5px;color:var(--danger);line-height:1.05;margin-top:1px;max-width:42px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .dayrow .lanecells{flex:1 1 0;display:flex}
@@ -226,7 +227,9 @@ input,select,textarea{font-family:inherit;font-size:14px}
 /* Google events (read-only) */
 .gevent{position:absolute;left:2px;right:2px;background:#e7eaf0;color:#4b5563;border-left:3px solid #9aa3b2;border-radius:5px;font-size:10px;padding:2px 5px;overflow:hidden;pointer-events:none}
 .gchip{display:inline-flex;align-items:center;gap:3px;font-size:9px;color:#6b7280;background:#eef0f4;border-radius:10px;padding:1px 5px;margin-top:1px}
-.workblock .lbl{font-size:11px}
+.workblock .lbl{font-size:10.5px;line-height:1.2;white-space:normal;overflow:visible;word-break:break-word}
+.workblock{overflow:visible}
+.workblock .sm{white-space:nowrap}
 .gcal-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
 .gcal-dot{width:8px;height:8px;border-radius:50%;background:#cbd0da}
 .gcal-dot.on{background:var(--good)}
@@ -236,7 +239,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
   box-shadow:0 2px 6px rgba(20,25,40,.18);overflow:hidden;pointer-events:auto;cursor:grab;
   display:flex;flex-direction:column;gap:1px;justify-content:flex-start;border:1px solid rgba(255,255,255,.35);
   user-select:none;touch-action:none}
-.calcard .lbl{line-height:1.18;overflow:hidden}
+.calcard .lbl{line-height:1.18;overflow:hidden;overflow-wrap:anywhere;word-break:break-word;white-space:normal}
 .calcard .sm{font-size:10px;font-weight:600;opacity:.92;line-height:1.2;white-space:pre-wrap}
 .calcard.tent{opacity:.9;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.18) 0 6px,transparent 6px 12px)}
 .calcard .rz{position:absolute;left:0;right:0;height:7px;cursor:ns-resize;display:flex;align-items:center;justify-content:center;z-index:2}
@@ -247,6 +250,14 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .calcard.dim{opacity:.18}
 .calcard.donecard{opacity:.55}
 .calcard.donecard .lbl{text-decoration:line-through}
+.calcard.selected{box-shadow:0 0 0 2px #111827,0 2px 6px rgba(20,25,40,.18)}
+.calcard .lbl[contenteditable="true"]{outline:1px dashed rgba(255,255,255,.9);outline-offset:1px;cursor:text}
+.lanehdr{position:relative}
+.lanehdr .lh{position:relative}
+.lanerz{position:absolute;top:0;width:10px;height:100%;cursor:col-resize;z-index:6}
+.lanerz:hover::after,.lanerz.active::after{content:'';position:absolute;left:4px;top:2px;bottom:2px;width:2px;background:var(--accent,#2f6df6);border-radius:2px}
+.prow.dragging{opacity:.4}
+.prow{cursor:grab}
 /* drag: source stays as a faint placeholder, a translucent ghost follows the cursor */
 .calcard.dragsource{opacity:.25!important;box-shadow:none!important;filter:saturate(.7)}
 .dragghost{position:fixed;z-index:9999;pointer-events:none;opacity:.8;border-radius:8px;color:#fff;font-weight:700;
@@ -737,6 +748,49 @@ function seed(){
 /* ---------------- helpers ---------------- */
 const proj=id=>state.projects.find(p=>p.id===id);
 const lane=id=>state.lanes.find(l=>l.id===id);
+// カレンダー選択中カード / クリップボード / ホバー中の日付・レーン（保存不要の一時UI状態）
+let SELECTED_CARD=null, CLIPBOARD_CARD=null, HOVER_DATE=null, HOVER_LANE=null;
+function laneWidths(){
+  const lanes=state.lanes;const n=lanes.length||1;
+  let total=0;
+  lanes.forEach(l=>{if(!l.widthPct||l.widthPct<=0)l.widthPct=100/n;total+=l.widthPct;});
+  if(total>0&&Math.abs(total-100)>0.01)lanes.forEach(l=>l.widthPct=l.widthPct/total*100);
+  return lanes.map(l=>l.widthPct);
+}
+// カード内のラベルが枠に収まらない場合、まずフォントを少しずつ縮小し、それでも収まらなければ
+// カードの高さ自体を広げて必ず全文が見えるようにする（テキストが切れることは絶対に避ける）
+function fitCardText(el){
+  const lbl=el.querySelector('.lbl');if(!lbl)return;
+  const sm=el.querySelector('.sm');
+  // ラベル単体だけでなく「ラベル＋要約」の合計の高さで判定する。
+  // 要約(.sm)だけがカードからはみ出して見切れるケース（先方＝破線枠の枠線が太い分、内側が特に狭くなり起きやすい）を防ぐため。
+  let lblSize=parseFloat(getComputedStyle(lbl).fontSize)||11.5;
+  let smSize=sm?(parseFloat(getComputedStyle(sm).fontSize)||10):0;
+  const minLbl=7.5,minSm=6.5;let guard=0;
+  const contentH=()=>lbl.scrollHeight+(sm?sm.scrollHeight:0);
+  const availH=()=>el.clientHeight-6;
+  while(contentH()>availH()&&(lblSize>minLbl||smSize>minSm)&&guard++<28){
+    if(lblSize>minLbl){lblSize-=0.5;lbl.style.fontSize=lblSize+'px';}
+    if(sm&&smSize>minSm){smSize-=0.5;sm.style.fontSize=smSize+'px';}
+  }
+  if(contentH()>availH()){
+    el.style.height='auto';
+    el.style.minHeight=(contentH()+14)+'px';
+  }
+}
+function selectCalCard(el,id){
+  $$('.calcard.selected').forEach(x=>x.classList.remove('selected'));
+  if(el)el.classList.add('selected');
+  SELECTED_CARD=id;
+}
+function duplicateCard(src){
+  if(!src)return;
+  const clone=JSON.parse(JSON.stringify(src));clone.id=uid();
+  if(HOVER_DATE){const span=daysBetween(src.start,src.end);clone.start=HOVER_DATE;clone.end=iso(addDays(parseISO(HOVER_DATE),span));}
+  if(HOVER_LANE&&lane(HOVER_LANE))clone.laneId=HOVER_LANE;
+  state.tasks.push(clone);save();renderCalendar();renderNav();toast('複製しました');
+  SELECTED_CARD=clone.id;
+}
 // tasks that appear on the calendar (have a start & end period and a project)
 const calTasks=()=>state.tasks.filter(t=>t.projectId&&t.start&&t.end);
 const projColor=id=>{const p=proj(id);return p?p.color:'#94a3b8';};
@@ -866,11 +920,31 @@ function switchView(v){
 function renderNav(){
   const host=$('#navProjects');host.innerHTML='';
   state.projects.filter(p=>p.status==='active').forEach(p=>{
-    const el=document.createElement('div');el.className='prow';
+    const el=document.createElement('div');el.className='prow';el.draggable=true;el.dataset.pid=p.id;
     el.innerHTML=`<span class="dot" style="background:${p.color}"></span><span class="nm">${esc(p.name)}</span>`;
-    el.onclick=()=>openProject(p.id);
+    el.onclick=()=>{if(!el.classList.contains('justdragged'))openProject(p.id);};
+    el.addEventListener('dragstart',()=>{el.classList.add('dragging');});
+    el.addEventListener('dragend',()=>{
+      el.classList.remove('dragging');
+      el.classList.add('justdragged');setTimeout(()=>el.classList.remove('justdragged'),50);
+      const order=[...host.querySelectorAll('.prow')].map(r=>r.dataset.pid);
+      const orderSet=new Set(order);
+      const activeOnes=order.map(id=>state.projects.find(x=>x.id===id)).filter(Boolean);
+      const rest=state.projects.filter(x=>!orderSet.has(x.id));
+      state.projects=[...activeOnes,...rest];
+      save();
+    });
     host.appendChild(el);
   });
+  if(!host.dataset.dndInit){
+    host.dataset.dndInit='1';
+    host.addEventListener('dragover',ev=>{
+      ev.preventDefault();
+      const dragging=host.querySelector('.dragging');if(!dragging)return;
+      const after=[...host.querySelectorAll('.prow:not(.dragging)')].find(r=>ev.clientY<r.getBoundingClientRect().top+r.getBoundingClientRect().height/2);
+      if(after)host.insertBefore(dragging,after);else host.appendChild(dragging);
+    });
+  }
   const ic=$('#inboxcount');const n=state.tasks.filter(t=>!t.projectId&&t.status!=='done').length;
   ic.textContent=n?`(${n})`:'';
   updateGoogleNav();updateCloudNav();
@@ -1034,9 +1108,10 @@ function openTask(id,forceProject,opts){
   let t=id?state.tasks.find(x=>x.id===id):null;
   const isNew=!t;
   if(isNew){
-    t={id:uid(),projectId:forceProject||(opts.withDates?(state.projects[0]&&state.projects[0].id):null),laneId:defaultLaneId('self'),
+    t={id:uid(),projectId:forceProject||(opts.withDates?(state.projects[0]&&state.projects[0].id):null),laneId:opts.presetLane||defaultLaneId('self'),
       name:'',start:'',end:'',deadline:'',estMin:60,priority:'mid',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]};
-    if(opts.withDates){t.start=state.ui.calDay||todayISO();t.end=t.start;}
+    if(opts.withDates){t.start=opts.presetDate||state.ui.calDay||todayISO();t.end=t.start;}
+    if(opts.presetLane){const ln=lane(opts.presetLane);if(ln)t.side=ln.kind==='client'?'client':'self';}
   }
   const pcur=t.projectId;
   openModal(`
@@ -1217,9 +1292,13 @@ function renderCalendar(){
   state.tasks.filter(t=>t.status!=='done'&&t.deadline&&t.projectId&&allowed.includes(t.projectId)).forEach(t=>{
     (dlByDate[t.deadline]=dlByDate[t.deadline]||[]).push({color:projColor(t.projectId),name:t.name});
   });
+  const laneW=laneWidths(); // %表記（合計100）。ユーザーがドラッグで調整可能
+  const laneCum=[];{let acc=0;laneW.forEach(w=>{laneCum.push(acc);acc+=w;});}
   cols.forEach(col=>{
     const mc=document.createElement('div');mc.className='monthcol';
-    let laneHdr=`<div class="lanehdr"><div class="gut"></div>`+lanes.map(l=>`<div class="lh ${l.kind==='client'?'client':''}">${esc(l.name)}${l.kind==='client'?' <span style="font-size:9px;opacity:.7">〔破線枠〕</span>':''}</div>`).join('')+`</div>`;
+    // レーン見出し(.lh)の%幅は、行側の.lanecellsと同じく「日付欄(gut)を除いた残り幅」を基準に計算する必要がある。
+    // .lanehdr自体（gut込みの全幅）を基準にしてしまうと、gutの分だけ見出しが実際のマス目より広くなり、境界線がずれる原因になっていた。
+    let laneHdr=`<div class="lanehdr"><div class="gut"></div><div class="lanehdrcells">`+lanes.map((l,li)=>`<div class="lh ${l.kind==='client'?'client':''}" style="flex:0 0 ${laneW[li]}%">${esc(l.name)}${l.kind==='client'?' <span style="font-size:9px;opacity:.7">〔破線枠〕</span>':''}</div>`).join('')+`</div></div>`;
     let rows='';
     col.days.forEach((ds,i)=>{
       const d=parseISO(ds);const wd=d.getDay();const hol=holidayName(ds);
@@ -1230,49 +1309,99 @@ function renderCalendar(){
       if(ds===todayISO())cls.push('today');
       rows+=`<div class="${cls.join(' ')}" data-date="${ds}" style="height:${H}px">
         <div class="gut"><div class="dtop"><span class="dnum">${d.getDate()}</span><span class="dwk">${WK[wd]}</span>${(dlByDate[ds]||[]).slice(0,3).map(x=>`<span class="dldot" style="background:${x.color}" title="締切: ${esc(x.name)}"></span>`).join('')}</div>${hol?`<span class="holname">${esc(hol)}</span>`:''}</div>
-        <div class="lanecells">${lanes.map(l=>`<div class="lc" data-lane="${l.id}" data-date="${ds}"></div>`).join('')}</div>
+        <div class="lanecells">${lanes.map((l,li)=>`<div class="lc" data-lane="${l.id}" data-date="${ds}" style="flex:0 0 ${laneW[li]}%"></div>`).join('')}</div>
       </div>`;
     });
     mc.innerHTML=`<div class="mhead"><span>${col.title}</span><span class="mo">${col.mo||''}</span></div>
       ${laneHdr}<div class="daygrid" style="height:${col.days.length*H}px">${rows}<div class="cardlayer"></div></div>`;
     host.appendChild(mc);
+    if(!READONLY){
+      // 空きマスのダブルクリック→その日付・レーンをプリセットしてタスク作成
+      mc.querySelectorAll('.lc').forEach(lc=>{
+        lc.addEventListener('dblclick',e=>{e.stopPropagation();openTask(null,null,{withDates:true,presetDate:lc.dataset.date,presetLane:lc.dataset.lane});});
+        lc.addEventListener('mouseover',()=>{HOVER_DATE=lc.dataset.date;HOVER_LANE=lc.dataset.lane;});
+      });
+    }
     // place cards, packing overlapping cards within a lane into sub-columns
     const layer=mc.querySelector('.cardlayer');
     const grid=mc.querySelector('.daygrid');
     const start=col.days[0],end=col.days[col.days.length-1];
-    const L=lanes.length;
     const showSummary=state.ui.gran==='3month'||state.ui.gran==='1month';
+    // 単一案件表示か複数案件表示かで「並び順」を別々に記憶する（案件を跨いだ並べ替えが単一案件表示の並びを崩さないように）
+    const ordKey=allowed.length===1?'subOrder':'subOrderMulti';
     lanes.forEach((ln,li)=>{
-      const laneCards=calTasks().filter(c=>c.laneId===ln.id&&allowed.includes(c.projectId)&&!(c.end<start||c.start>end))
-        .sort((a,b)=>a.start.localeCompare(b.start)||b.end.localeCompare(a.end));
-      // greedy sub-column assignment (local map; never mutate task objects)
-      const colEnds=[]; const subOf={};
-      laneCards.forEach(c=>{
-        let sub=colEnds.findIndex(e=>e<c.start);
-        if(sub<0){sub=colEnds.length;colEnds.push(c.end);}else{colEnds[sub]=c.end;}
-        subOf[c.id]=sub;
+      const laneCards=calTasks().filter(c=>c.laneId===ln.id&&allowed.includes(c.projectId)&&!(c.end<start||c.start>end));
+      // sub-column assignment: process cards in the user's chosen left→right priority (subOrder) first,
+      // falling back to date order when priority ties — then place each card in the first column whose
+      // existing cards don't overlap it (checked against ALL cards already in that column, not just the last one,
+      // since processing order is no longer strictly chronological once subOrder is customized).
+      const procOrder=laneCards.slice().sort((a,b)=>(a[ordKey]||0)-(b[ordKey]||0)||a.start.localeCompare(b.start)||b.end.localeCompare(a.end));
+      const columns=[]; const subOf={};
+      procOrder.forEach(c=>{
+        let placed=columns.findIndex(col=>col.every(iv=>c.end<iv.start||c.start>iv.end));
+        if(placed<0){placed=columns.length;columns.push([]);}
+        columns[placed].push({start:c.start,end:c.end});
+        subOf[c.id]=placed;
       });
-      const K=Math.max(1,colEnds.length);
+      const K=Math.max(1,columns.length);
       laneCards.forEach(card=>{
         const cardSub=subOf[card.id];
         const s=Math.max(0,daysBetween(start,card.start));
         const e=Math.min(col.days.length-1,daysBetween(start,card.end));
         const top=s*H, height=(e-s+1)*H-3;
         const done=card.status==='done';
-        const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self')+(done?' donecard':'');
+        const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self')+(done?' donecard':'')+(card.id===SELECTED_CARD?' selected':'');
         el.style.top=(top+1)+'px';
         el.style.height=Math.max(20,height)+'px';
-        el.style.left=`calc(46px + (100% - 46px) * ${(li+cardSub/K)/L} + 2px)`;
-        el.style.width=`calc((100% - 46px) * ${1/(L*K)} - 4px)`;
+        el.style.left=`calc(48px + (100% - 48px) * ${(laneCum[li]+cardSub/K*laneW[li])/100} + 2px)`;
+        el.style.width=`calc((100% - 48px) * ${(laneW[li]/K)/100} - 4px)`;
         el.style.background=projColor(card.projectId);
         el.innerHTML=`<div class="rz t"><i></i></div><div class="lbl">${done?'✓ ':''}${esc(card.name)}</div>
           ${showSummary&&card.summary?`<div class="sm">${esc(card.summary)}</div>`:''}
           <div class="rz b"><i></i></div>`;
-        el.dataset.cardId=card.id;
-        if(READONLY)el.style.cursor='default'; else attachCardHandlers(el,card,{col,lanes,H,grid,layer,mc});
+        el.dataset.cardId=card.id;el.dataset.sub=cardSub;
+        if(READONLY)el.style.cursor='default'; else attachCardHandlers(el,card,{col,lanes,H,grid,layer,mc,laneCards,cardSub,K,ordKey});
         layer.appendChild(el);
+        fitCardText(el);
       });
     });
+  });
+  if(!READONLY){
+    // レーン境界の実際の描画位置にツマミを重ねる。全ての月列がDOMに揃ってから測る
+    // （途中の列だけで測ると、後の列が増えることでflex幅が変わり位置がずれるため）
+    host.querySelectorAll('.monthcol').forEach(mc=>{
+      const hdrEl=mc.querySelector('.lanehdr');if(!hdrEl)return;
+      const hdrRect=hdrEl.getBoundingClientRect();
+      [...hdrEl.querySelectorAll('.lh')].forEach((lhEl,li)=>{
+        if(li>=lanes.length-1)return;
+        const x=lhEl.getBoundingClientRect().right-hdrRect.left;
+        const rz=document.createElement('div');rz.className='lanerz';rz.dataset.idx=li;rz.title='ドラッグでレーン幅を調整';
+        rz.style.left=(x-5)+'px';
+        hdrEl.appendChild(rz);
+        attachLaneResizer(rz,li);
+      });
+    });
+  }
+}
+function attachLaneResizer(rz,idx){
+  rz.addEventListener('pointerdown',ev=>{
+    ev.preventDefault();ev.stopPropagation();
+    const container=rz.closest('.lanehdr');
+    const rect=container.getBoundingClientRect();
+    const w0=laneWidths();const wi0=w0[idx],wn0=w0[idx+1];
+    const startX=ev.clientX;
+    rz.classList.add('active');
+    function onMove(e){
+      const deltaPct=(e.clientX-startX)/rect.width*100;
+      let wi=Math.max(8,Math.min(wi0+wn0-8,wi0+deltaPct));
+      let wn=wi0+wn0-wi;
+      state.lanes[idx].widthPct=wi; state.lanes[idx+1].widthPct=wn;
+      renderCalendar();
+      document.querySelectorAll('.lanerz').forEach(r=>{if(+r.dataset.idx===idx)r.classList.add('active');});
+    }
+    function onUp(){document.removeEventListener('pointermove',onMove);document.removeEventListener('pointerup',onUp);save();}
+    document.addEventListener('pointermove',onMove);
+    document.addEventListener('pointerup',onUp);
   });
 }
 function renderDayView(host,col){
@@ -1310,7 +1439,7 @@ function renderDayView(host,col){
   plan.forEach(b=>{
     const top=((b.start/60)-sh)*H; const height=(b.dur/60)*H-3;
     const el=document.createElement('div');el.className='calcard self workblock'+(b.confirmed?'':' tent');
-    const half=(GBUSY[ds]||[]).length? 'left:calc(50% + 2px);width:calc(50% - 56px)':'left:calc(46px + 4px);width:calc(100% - 56px)';
+    const half=(GBUSY[ds]||[]).length? 'left:calc(50% + 2px);width:calc(50% - 56px)':'left:calc(48px + 4px);width:calc(100% - 56px)';
     el.style.cssText=`top:${top+1}px;height:${Math.max(20,height)}px;${half};background:${proj(b.projectId)?proj(b.projectId).color:'#94a3b8'}`;
     el.innerHTML=`<div class="lbl">${timeStr(b.start)} ${esc(b.name)}</div><div class="sm">${minToHM(b.dur)}・${b.confirmed?'確定':'仮'}</div>`;
     const gbtn=document.createElement('button');gbtn.className='btn sm';gbtn.style.cssText='position:absolute;right:4px;bottom:4px;font-size:10px;padding:2px 6px';
@@ -1319,6 +1448,7 @@ function renderDayView(host,col){
     el.appendChild(gbtn);
     el.onclick=()=>openTask(b.taskId);
     layer.appendChild(el);
+    fitCardText(el);
   });
   if(!plan.length&&!(GBUSY[ds]||[]).length)layer.innerHTML=`<div class="emptycal">この日の仮予定はありません。<br>「↻ 逆算リプラン」で締切から自動で作業を組みます。</div>`;
 }
@@ -1330,8 +1460,28 @@ function attachCardHandlers(el,card,ctx){
     const mode = ev.target.closest('.rz.t')?'top' : ev.target.closest('.rz.b')?'bottom' : 'move';
     startDrag(el,card,ctx,mode,ev);
   });
-  // double click to edit
-  el.addEventListener('dblclick',e=>{e.stopPropagation();e.preventDefault();openTask(card.id);});
+  // ラベルをダブルクリック→その場でテキスト編集（それ以外の場所はダブルクリックで詳細ウィンドウ）
+  const lblEl=el.querySelector('.lbl');
+  if(lblEl){
+    lblEl.addEventListener('dblclick',e=>{
+      e.stopPropagation();e.preventDefault();
+      lblEl.contentEditable='true';lblEl.focus();
+      const sel=window.getSelection();sel.selectAllChildren(lblEl);
+      const finish=(commit)=>{
+        lblEl.contentEditable='false';
+        const txt=lblEl.textContent.trim();
+        if(commit&&txt&&txt!==card.name){card.name=txt;save();toast('名称を変更しました');}
+        renderCalendar();
+      };
+      lblEl.addEventListener('blur',()=>finish(true),{once:true});
+      lblEl.addEventListener('keydown',ke=>{
+        if(ke.key==='Enter'){ke.preventDefault();lblEl.blur();}
+        else if(ke.key==='Escape'){ke.preventDefault();lblEl.textContent=(card.status==='done'?'✓ ':'')+card.name;finish(false);}
+      });
+    });
+  }
+  // 詳細ウィンドウを開く（ラベル上のダブルクリックは上のインライン編集を優先）
+  el.addEventListener('dblclick',e=>{if(e.target.closest('.lbl'))return;e.stopPropagation();e.preventDefault();openTask(card.id);});
 }
 function startDrag(el,card,ctx,mode,ev){
   const {lanes}=ctx;
@@ -1370,9 +1520,11 @@ function startDrag(el,card,ctx,mode,ev){
     if(row)return {date:row.dataset.date,lane:prop.lane};
     return null;
   }
+  let lastEv=null;
   function onMove(e){
     if(!active){ if(Math.abs(e.clientX-startX)<4&&Math.abs(e.clientY-startY)<4)return; begin(); }
     e.preventDefault();
+    lastEv=e;
     moveGhost(e);
     // aim the ghost's grab-point (not the raw cursor) at the grid for accurate snapping
     const aimX = mode==='move' ? (e.clientX-grabX+12) : e.clientX;
@@ -1390,10 +1542,28 @@ function startDrag(el,card,ctx,mode,ev){
     document.removeEventListener('pointerup',onUp);
     if(ghost){ghost.remove();ghost=null;}
     el.classList.remove('dragsource');
-    if(!active){clearHot();return;} // simple click — let dblclick handle it
+    if(!active){clearHot();selectCalCard(el,card.id);return;} // simple click — select (also lets dblclick handle editing)
     clearHot();
     const changed=prop.start!==origStart||prop.end!==origEnd||prop.lane!==origLane;
-    if(changed){card.start=prop.start;card.end=prop.end;card.laneId=prop.lane;const ln=lane(prop.lane);if(ln)card.side=ln.kind==='client'?'client':'self';save();toast('予定を移動しました');}
+    if(changed){
+      card.start=prop.start;card.end=prop.end;card.laneId=prop.lane;const ln=lane(prop.lane);if(ln)card.side=ln.kind==='client'?'client':'self';save();toast('予定を移動しました');
+    } else if(mode==='move'&&lastEv){
+      // 日付・レーンが変わらず、別カードの上でドロップされた場合は左右の並び順(サブ列)を入れ替える
+      // ※単一案件表示中の並びと、複数案件表示中の並びは別々に記憶する（ctx.ordKeyで切替）
+      const ordKey=ctx.ordKey||'subOrder';
+      const other=document.elementsFromPoint(lastEv.clientX,lastEv.clientY).find(x=>x.classList&&x.classList.contains('calcard')&&x!==el);
+      const otherId=other&&other.dataset.cardId;
+      const otherTask=otherId&&otherId!==card.id?state.tasks.find(t=>t.id===otherId):null;
+      if(otherTask){
+        // 見た目上どちらが左／右かは el.dataset.sub（現在の列番号）で判定し、その関係を確実に反転させる
+        // （subOrderの生の値だけを交換すると、両方0のまま＝見た目が変わらない、という事故が起きるため）
+        const curCardSub=+el.dataset.sub||0, curOtherSub=+other.dataset.sub||0;
+        const a=card[ordKey]||0,b=otherTask[ordKey]||0;
+        if(curCardSub<=curOtherSub){card[ordKey]=b+0.5;otherTask[ordKey]=a-0.5;}
+        else{card[ordKey]=b-0.5;otherTask[ordKey]=a+0.5;}
+        save();toast('カードの並び順を入れ替えました');
+      }
+    }
     renderCalendar();renderNav();
   }
   document.addEventListener('pointermove',onMove);
@@ -2193,6 +2363,12 @@ function wire(){
       const k=e.key.toLowerCase();
       if(k==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();}
       else if(k==='y'){e.preventDefault();redo();}
+      else if(k==='c'&&SELECTED_CARD&&!READONLY){
+        const src=state.tasks.find(x=>x.id===SELECTED_CARD);
+        if(src){e.preventDefault();CLIPBOARD_CARD=JSON.parse(JSON.stringify(src));toast('カードをコピーしました（⌘V で複製）');}
+      } else if(k==='v'&&CLIPBOARD_CARD&&!READONLY){
+        e.preventDefault();duplicateCard(CLIPBOARD_CARD);
+      }
     }
   });
 }
