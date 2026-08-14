@@ -1606,7 +1606,12 @@ function attachCardHandlers(el,card,ctx){
   el.addEventListener('pointerdown',ev=>{
     if(ev.button!==0)return;
     const mode = ev.target.closest('.rz.t')?'top' : ev.target.closest('.rz.b')?'bottom' : 'move';
-    startDrag(el,card,ctx,mode,ev);
+    if(mode==='move'&&SELECTED_CARDS.size>1&&SELECTED_CARDS.has(card.id)){
+      const group=[...SELECTED_CARDS].map(id=>state.tasks.find(t=>t.id===id)).filter(Boolean);
+      startGroupDrag(el,card,ctx,ev,group);
+    } else {
+      startDrag(el,card,ctx,mode,ev);
+    }
   });
   // ラベルをダブルクリック→その場でテキスト編集（それ以外の場所はダブルクリックで詳細ウィンドウ）
   const lblEl=el.querySelector('.lbl');
@@ -1711,6 +1716,73 @@ function startDrag(el,card,ctx,mode,ev){
         else{card[ordKey]=b-0.5;otherTask[ordKey]=a+0.5;}
         save();toast('カードの並び順を入れ替えました');
       }
+    }
+    renderCalendar();renderNav();
+  }
+  document.addEventListener('pointermove',onMove);
+  document.addEventListener('pointerup',onUp);
+}
+
+// 複数選択済みカードのうちの1枚をドラッグした場合、選択中の全カードをまとめて移動する。
+// 各カードの期間（日数）と、カード同士の日付の間隔（オフセット）は変えず、掴んだカード（card）の
+// 移動量（日数シフト）を全カードへ一律に適用することで、相対的な配置関係をそのまま保つ。
+// レーンはグループ移動では変更しない（意図しないレーン間の飛び移りを防ぐため）。
+function startGroupDrag(el,card,ctx,ev,group){
+  const startX=ev.clientX,startY=ev.clientY;
+  const rect=el.getBoundingClientRect();
+  const grabX=ev.clientX-rect.left,grabY=ev.clientY-rect.top;
+  const gw=rect.width,gh=rect.height;
+  const orig={};group.forEach(t=>{orig[t.id]={start:t.start,end:t.end};});
+  const anchorOrigStart=card.start;
+  let active=false,ghost=null,dayShift=0;
+  const clearHot=()=>{$$('.lc.hot').forEach(x=>x.classList.remove('hot'));};
+  function highlight(){
+    clearHot();
+    group.forEach(t=>{
+      const o=orig[t.id];
+      const s=iso(addDays(parseISO(o.start),dayShift)),e=iso(addDays(parseISO(o.end),dayShift));
+      let d=parseISO(s);const end=parseISO(e);let g=0;
+      while(d<=end&&g++<500){document.querySelectorAll(`.lc[data-date="${iso(d)}"][data-lane="${t.laneId}"]`).forEach(c=>c.classList.add('hot'));d=addDays(d,1);}
+    });
+  }
+  function begin(){
+    active=true;
+    group.forEach(t=>{document.querySelectorAll(`.calcard[data-card-id="${t.id}"]`).forEach(g=>g.classList.add('dragsource'));});
+    ghost=document.createElement('div');
+    ghost.className='dragghost'+(el.classList.contains('client')?' client':'');
+    if(!el.classList.contains('client'))ghost.style.background=projColor(card.projectId);
+    ghost.style.width=gw+'px';ghost.style.height=gh+'px';
+    ghost.innerHTML=`<div class="lbl">${group.length}件をまとめて移動中…</div>`;
+    document.body.appendChild(ghost);
+  }
+  function moveGhost(e){ if(ghost){ghost.style.left=(e.clientX-grabX)+'px';ghost.style.top=(e.clientY-grabY)+'px';} }
+  function hitDate(cx,cy){
+    const els=document.elementsFromPoint(cx,cy);
+    const lc=els.find(x=>x.classList&&x.classList.contains('lc'));
+    if(lc)return lc.dataset.date;
+    const row=els.find(x=>x.classList&&x.classList.contains('dayrow'));
+    if(row)return row.dataset.date;
+    return null;
+  }
+  function onMove(e){
+    if(!active){ if(Math.abs(e.clientX-startX)<4&&Math.abs(e.clientY-startY)<4)return; begin(); }
+    e.preventDefault();
+    moveGhost(e);
+    const aimX=e.clientX-grabX+12,aimY=e.clientY-grabY+10;
+    const d=hitDate(aimX,aimY)||hitDate(e.clientX,e.clientY);
+    if(d)dayShift=daysBetween(anchorOrigStart,d);
+    highlight();
+  }
+  function onUp(){
+    document.removeEventListener('pointermove',onMove);
+    document.removeEventListener('pointerup',onUp);
+    if(ghost){ghost.remove();ghost=null;}
+    group.forEach(t=>{document.querySelectorAll(`.calcard[data-card-id="${t.id}"]`).forEach(g=>g.classList.remove('dragsource'));});
+    clearHot();
+    if(!active){ selectCalCard(el,card.id,ev.shiftKey||ev.metaKey||ev.ctrlKey); return; }
+    if(dayShift!==0){
+      group.forEach(t=>{const o=orig[t.id];t.start=iso(addDays(parseISO(o.start),dayShift));t.end=iso(addDays(parseISO(o.end),dayShift));});
+      save();toast(`${group.length}件をまとめて移動しました（間隔はそのまま）`);
     }
     renderCalendar();renderNav();
   }
