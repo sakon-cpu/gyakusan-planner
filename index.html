@@ -2770,11 +2770,20 @@ function buildCalRenderCtx(){
   const laneCum=[];{let acc=0;laneW.forEach(w=>{laneCum.push(acc);acc+=w;});}
   return {lanes,allowed,dlByDate,laneW,laneCum};
 }
-function rowHeightForLayout(monthsPerRow,rowsPerPage){
-  if(rowsPerPage>=2)return monthsPerRow<=3?16:13;
-  if(monthsPerRow<=1)return 30;
-  if(monthsPerRow<=3)return 22;
-  return 15;
+// ★方針（2026-08-14修正）：印刷/PDFの日付行の高さ・フォント密度は「画面上のカレンダー表示と
+// 完全に一致させる」ことを最優先にする。以前は用紙の余白を減らすために段数やページ内訳に応じて
+// Hを13〜40pxの間で連続的に調整していたが、これだとページ設定によって「カード幅とフォントサイズの
+// 比率」が変わってしまい、fitCardText()による自動縮小の掛かり具合がページごとにバラバラになって
+// 「文字が大きくなったり小さくなったりする」「一部だけ文字が切れる」不具合の原因になっていた。
+// 1ページの月数が2以上（＝画面の「3ヶ月」表示と同じ密度）ならH=22＋`g-3month`クラス（小さめフォント・
+// 狭いパディング）、1ヶ月のみ（＝画面の「1ヶ月」表示と同じ密度）ならH=30・通常フォントで固定する。
+// これにより印刷結果は常に画面のどちらかの表示モードと画素単位で同じ密度になり、最終的に用紙へ
+// 収める際は（exportRangePDF側の）画像全体の縮小のみで調整するため、文字サイズの比率が崩れない。
+function rowHeightForLayout(monthsPerRow){
+  return monthsPerRow<=1?30:22;
+}
+function printHostClass(monthsPerRow){
+  return monthsPerRow<=1?'months':'months g-3month';
 }
 // months: [{y,m},...] の全リストを、monthsPerRow×rowsPerPage で「ページ→行→月」に分割する
 function paginateMonths(months,monthsPerRow,rowsPerPage){
@@ -2802,32 +2811,12 @@ function buildPrintPageEl(rowsOfMonths,ctx,opts){
   document.body.appendChild(wrap); // ← カードを組み立てる前に必ず接続する
   wrap.appendChild(buildPrintHeadEl(opts.title,pageRangeLabel(rowsOfMonths)));
   rowsOfMonths.forEach(rowYMs=>{
-    const rowHost=document.createElement('div');rowHost.className='months';
+    const rowHost=document.createElement('div');rowHost.className=printHostClass(opts.monthsPerRow);
     wrap.appendChild(rowHost); // ← paintMonthColsを呼ぶ前に接続する（rowHost自体も接続済みでないとfitCardTextの測定が壊れる）
     const cols=rowYMs.map(ym=>monthCol(ym.y,ym.m));
     paintMonthCols(rowHost,cols,{bufOffset:0,allowed:ctx.allowed,lanes:ctx.lanes,laneW:ctx.laneW,laneCum:ctx.laneCum,H:opts.H,dlByDate:ctx.dlByDate,showSummary:opts.showSummary,interactive:false});
   });
   return wrap;
-}
-function measureNaturalHeight(el){
-  // buildPrintPageElで既にdocumentへ接続済みの前提（未接続なら念のため接続する）
-  const wasConnected=el.isConnected;
-  if(!wasConnected){el.style.visibility='hidden';document.body.appendChild(el);}
-  void el.offsetHeight;
-  const h=el.getBoundingClientRect().height;
-  el.remove();if(!wasConnected)el.style.visibility='';
-  return h;
-}
-// 1ページの月組み(rowsOfMonths)に対して、そのページの縦横比が用紙にできるだけ近くなる
-// 日付行の高さ(H)を試算する（段組みで用紙の高さを持て余す＝上下に大きな余白が出るのを防ぐ）。
-// 最終的な安全網（用紙内に収まるかの再フィット）は exportRangePDF 側で必ずかけているので、
-// ここでの見積もりが多少ずれても内容が切れることはない。
-function tuneRowHeight(rowsOfMonths,ctx,opts,baseH,availWpx,availHpx){
-  const trialEl=buildPrintPageEl(rowsOfMonths,ctx,{...opts,H:baseH,availWpx});
-  const measured=measureNaturalHeight(trialEl);
-  if(!measured)return baseH;
-  const ideal=baseH*((availHpx*0.96)/measured);
-  return Math.max(8,Math.min(40,Math.round(ideal)));
 }
 async function rasterizePage(el,scale){
   if(!el.isConnected)document.body.appendChild(el); // buildPrintPageElで通常は既に接続済み
@@ -2840,17 +2829,16 @@ async function rasterizePage(el,scale){
 // pagesMonths: paginateMonths()の戻り値。実際にPDFを生成して保存する。
 async function exportRangePDF(pagesMonths,cfg){
   const p=PAPERS[cfg.paper];
-  const {availW,availH}=paperPx(cfg.paper);
+  const {availW}=paperPx(cfg.paper);
   const orientation=p.w>=p.h?'l':'p';
   const ctx=buildCalRenderCtx();
-  const baseH=rowHeightForLayout(cfg.monthsPerRow,cfg.rowsPerPage);
-  const showSummary=(cfg.monthsPerRow<=3&&cfg.rowsPerPage===1);
+  const H=rowHeightForLayout(cfg.monthsPerRow);
+  const showSummary=true;
   const { jsPDF }=window.jspdf;
   const doc=new jsPDF({orientation,unit:'mm',format:[p.w,p.h]});
   const margin=PMARGIN;
   for(let i=0;i<pagesMonths.length;i++){
-    const tunedH=tuneRowHeight(pagesMonths[i],ctx,{title:cfg.title,showDur:cfg.showDur,showSummary},baseH,availW,availH);
-    const el=buildPrintPageEl(pagesMonths[i],ctx,{title:cfg.title,showDur:cfg.showDur,availWpx:availW,H:tunedH,showSummary});
+    const el=buildPrintPageEl(pagesMonths[i],ctx,{title:cfg.title,showDur:cfg.showDur,availWpx:availW,H,showSummary,monthsPerRow:cfg.monthsPerRow});
     const canvas=await rasterizePage(el);
     const cw=canvas.width,ch=canvas.height;
     let drawW=p.w-2*margin, drawH=drawW*ch/cw;
@@ -2965,14 +2953,13 @@ function openPrintModal(){
     try{
       const pages=paginateMonths(months,monthsPerRow,rowsPerPage);
       const ctx=buildCalRenderCtx();
-      const {availW,availH}=paperPx(paper);
-      const baseH=rowHeightForLayout(monthsPerRow,rowsPerPage);
-      const showSummary=(monthsPerRow<=3&&rowsPerPage===1);
+      const {availW}=paperPx(paper);
+      const H=rowHeightForLayout(monthsPerRow);
+      const showSummary=true;
       const urls=[];
       for(let i=0;i<pages.length;i++){
         if(myToken!==previewToken||prModalClosed)return; // 途中で設定が変わった／モーダルが閉じた＝この結果は使わない
-        const tunedH=tuneRowHeight(pages[i],ctx,{title,showDur,showSummary},baseH,availW,availH);
-        const el=buildPrintPageEl(pages[i],ctx,{title,showDur,availWpx:availW,H:tunedH,showSummary});
+        const el=buildPrintPageEl(pages[i],ctx,{title,showDur,availWpx:availW,H,showSummary,monthsPerRow});
         const canvas=await rasterizePage(el,1); // プレビューは軽量化のため等倍
         urls.push(canvas.toDataURL('image/jpeg',0.85));
       }
