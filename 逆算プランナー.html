@@ -59,6 +59,10 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
 .grid2{display:grid;grid-template-columns:1.6fr 1fr;gap:20px;align-items:start}
 @media(max-width:1100px){.grid2{grid-template-columns:1fr}}
+.todayside{position:sticky;top:16px}
+@media(max-width:1100px){.todayside{position:static}}
+.scrollbox{max-height:min(56vh,520px);overflow-y:auto}
+.todaykind-empty{padding:16px;color:var(--sub);font-size:13px;text-align:center}
 
 .sechead{font-size:12px;letter-spacing:.5px;color:var(--sub);font-weight:700;text-transform:uppercase;margin:0 0 10px}
 
@@ -431,14 +435,18 @@ body.shared #main{padding-top:34px}
       </div>
       <div class="grid2">
         <div>
-          <div class="sechead">今日やること</div>
-          <div class="card" id="todayBlocks"></div>
+          <div class="sechead">今日やること（〆切が近い順・全プロジェクト横断）</div>
+          <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">📞 連絡・報告・確認</div>
+          <div class="card" id="todayQuick" style="margin-bottom:18px"></div>
+          <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">📝 立案・企画（時間のかかるもの）</div>
+          <div class="card" id="todayWork"></div>
         </div>
-        <div>
+        <div class="todayside">
           <div class="sechead">AIの今日の推奨</div>
           <div class="card recobox" id="todayReco"></div>
-          <div class="sechead" style="margin-top:20px">⚠ 締切が近いもの</div>
-          <div class="card" id="todayDeadlines"></div>
+          <div class="sechead" style="margin-top:20px">⚠ 締切が近いもの（2ヶ月以内）</div>
+          <div class="filterchips" id="todayFilters" style="margin-bottom:8px"></div>
+          <div class="card scrollbox" id="todayDeadlines"></div>
         </div>
       </div>
     </section>
@@ -694,6 +702,7 @@ function migrate(){
   if(!state.google)state.google={clientId:'',busyCalendars:[],useForPlanning:true};
   if(!state.blocks)state.blocks=[];
   if(state.settings&&state.settings.dailyCap==null)state.settings.dailyCap=180;
+  if(state.ui&&state.ui.todayFilter==null)state.ui.todayFilter='all';
   (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||/client/i.test(l.name)))?'client':'self';});
   (state.projects||[]).forEach(p=>{if(p.client==null)p.client='';});
   const firstSelf=()=>{const l=(state.lanes||[]).find(x=>x.kind==='self')||state.lanes[0];return l?l.id:null;};
@@ -747,7 +756,7 @@ function seed(){
       {id:uid(),projectId:p3,laneId:lSelf,name:'経費処理',start:T,end:T,deadline:T,estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
       {id:uid(),projectId:null,laneId:lSelf,name:'名刺デザインの見積を取る',start:'',end:'',deadline:'',estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
     ],
-    ui:{gran:'3month',anchor:iso(new Date(t.getFullYear(),t.getMonth(),1)),filter:'all',calDay:T}
+    ui:{gran:'3month',anchor:iso(new Date(t.getFullYear(),t.getMonth(),1)),filter:'all',calDay:T,todayFilter:'all'}
   };
 }
 
@@ -824,6 +833,17 @@ function taskProgress(t){
   return t.subtasks.filter(s=>s.done).length/t.subtasks.length;
 }
 function remainingMin(t){return Math.round(t.estMin*(1-taskProgress(t)));}
+// 明示的な締切が未設定でも、カレンダーに登録した終了日（単発予定ならその日）を締切として自動的に扱う。
+// 提出物やMTGは「カレンダー上のその日」＝実質の締切であることがほとんどなので、二重入力をなくすための仕様。
+function effectiveDeadline(t){return t.deadline||t.end||null;}
+// タスク名・所要時間から「連絡・報告・確認」系か「立案・企画」系かを推定する（手動フィールドを増やさず自動判定）
+function taskKind(t){
+  const heavyKw=/企画|構成|脚本|提案|立案|設計|執筆|制作|撮影|編集|台本|プロット|シナリオ|資料作成/;
+  const quickKw=/確認|報告|連絡|承認|返信|MTG|打ち合わせ|レビュー|共有|フィードバック|チェック|提出/;
+  if(heavyKw.test(t.name))return 'work';
+  if(quickKw.test(t.name))return 'quick';
+  return (t.estMin||60)<=45?'quick':'work';
+}
 function availableMinPerDay(){
   const [sh,sm]=state.settings.workStart.split(':').map(Number);
   const [eh,em]=state.settings.workEnd.split(':').map(Number);
@@ -842,18 +862,19 @@ function workdaysUntil(deadlineISO){
 }
 function scoreTask(t){
   if(t.status==='done')return -1;
-  const days=t.deadline?daysBetween(todayISO(),t.deadline):60;
+  const ed=effectiveDeadline(t);
+  const days=ed?daysBetween(todayISO(),ed):60;
   const urgency= days<=0?100 : clamp(120/(days+1),4,100);
   const imp={hi:40,mid:22,lo:10}[t.priority]||10;
   const rem=remainingMin(t);
-  const avail=workdaysUntil(t.deadline)*availableMinPerDay();
+  const avail=workdaysUntil(ed)*availableMinPerDay();
   const pressure= avail>0? clamp((rem/avail)*40,0,60) : 60;
   const commPressure=t.comms.some(c=>!c.done&&(c.type==='consult'||c.type==='decide'))?12:0;
   return urgency+imp+pressure+commPressure;
 }
 function shortageHours(t){
   const rem=remainingMin(t);
-  const avail=workdaysUntil(t.deadline)*availableMinPerDay();
+  const avail=workdaysUntil(effectiveDeadline(t))*availableMinPerDay();
   const short=rem-avail;
   return short>0?Math.round(short/60*10)/10:0;
 }
@@ -883,7 +904,7 @@ function generateSchedule(daysAhead=28){
   // keep confirmed blocks only for tasks that still exist and aren't done; rebuild tentative
   state.blocks=(state.blocks||[]).filter(b=>b.confirmed&&state.tasks.some(t=>t.id===b.taskId&&t.status!=='done'));
   const tasks=activeTasks().filter(t=>remainingMin(t)>0).sort((a,b)=>{
-    const ad=a.deadline||'9999-12-31',bd=b.deadline||'9999-12-31';
+    const ad=effectiveDeadline(a)||'9999-12-31',bd=effectiveDeadline(b)||'9999-12-31';
     return ad.localeCompare(bd)||scoreTask(b)-scoreTask(a);
   });
   const cap=(state.settings.dailyCap|| 180);
@@ -893,7 +914,8 @@ function generateSchedule(daysAhead=28){
   const shortages=[];
   for(const t of tasks){
     let need=remainingMin(t);
-    const end=t.deadline?parseISO(t.deadline):addDays(parseISO(todayISO()),daysAhead);
+    const ed2=effectiveDeadline(t);
+    const end=ed2?parseISO(ed2):addDays(parseISO(todayISO()),daysAhead);
     let cur=parseISO(todayISO());
     while(need>0&&cur<=end){
       const ds=iso(cur);
@@ -984,28 +1006,43 @@ function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;'
 function renderToday(){
   const now=new Date();
   $('#todayDate').textContent=`${now.getMonth()+1}月${now.getDate()}日 ${WK[now.getDay()]}曜日`;
-  // blocks
-  ensureSchedule();
-  const plan=blocksForDay(todayISO());
-  const bl=$('#todayBlocks');bl.innerHTML='';
-  if(!plan.length){bl.innerHTML='<div class="emptyhint">今日の作業予定はありません。「↻ 逆算リプラン」で締切から自動で組みます。</div>';}
-  plan.forEach(b=>{
-    const p=proj(b.projectId);
-    const row=document.createElement('div');row.className='block'+(b.confirmed?'':' ghosted');
-    row.innerHTML=`<div class="time">${timeStr(b.start)}</div>
-      <div class="bar" style="background:${p?p.color:'#94a3b8'}"></div>
-      <div class="ttl">${esc(b.name)}<div class="meta">${p?esc(p.name):''}${b.confirmed?' ・確定':' ・仮'}</div></div>
-      <div class="dur">${minToHM(b.dur)}</div>`;
-    row.onclick=()=>openTask(b.taskId);
-    bl.appendChild(row);
-  });
+  ensureSchedule(); // 1日表示や逆算リプラン等、他画面が state.blocks を使うため維持
+
+  // 今日やること：全プロジェクト横断・締切が近い順にピックし、「連絡確認系」と「立案企画系」に分けて表示する
+  const withDL=activeTasks().filter(t=>effectiveDeadline(t));
+  const withoutDL=activeTasks().filter(t=>!effectiveDeadline(t));
+  const byUrgency=(a,b)=>{
+    const ad=effectiveDeadline(a),bd=effectiveDeadline(b);
+    if(ad&&bd)return ad.localeCompare(bd)||scoreTask(b)-scoreTask(a);
+    return scoreTask(b)-scoreTask(a);
+  };
+  const picked=[...withDL.sort(byUrgency),...withoutDL.sort(byUrgency)];
+  const renderPickList=(host,list,emptyMsg)=>{
+    host.innerHTML='';
+    if(!list.length){host.innerHTML=`<div class="todaykind-empty">${emptyMsg}</div>`;return;}
+    list.forEach(t=>{
+      const p=proj(t.projectId);const ed=effectiveDeadline(t);
+      const days=ed?daysBetween(todayISO(),ed):null;
+      const label=days==null?'':(days<0?`${-days}日超過`:days===0?'本日締切':`あと${days}日`);
+      const durColor=days==null?'var(--sub)':(days<=1?'var(--danger)':days<=4?'var(--warn)':'var(--sub)');
+      const row=document.createElement('div');row.className='block';
+      row.innerHTML=`<div class="bar" style="background:${p?p.color:'#94a3b8'}"></div>
+        <div class="ttl">${esc(t.name)}<div class="meta">${p?esc(p.name):''}${ed?` ・締切 ${fmtJ(ed)}${!t.deadline?'（自動）':''}`:''}</div></div>
+        <div class="dur" style="color:${durColor};font-weight:700">${label}</div>`;
+      row.onclick=()=>openTask(t.id);
+      host.appendChild(row);
+    });
+  };
+  renderPickList($('#todayQuick'),picked.filter(t=>taskKind(t)==='quick').slice(0,6),'連絡・確認系のタスクはありません。');
+  renderPickList($('#todayWork'),picked.filter(t=>taskKind(t)==='work').slice(0,6),'立案・企画系のタスクはありません。');
+
   // reco
   const rc=$('#todayReco');rc.innerHTML='';
   const ranked=rankedTasks().slice(0,3);
   if(!ranked.length)rc.innerHTML='<div class="emptyhint" style="padding:6px">推奨はありません。</div>';
   ranked.forEach((t,i)=>{
     const p=proj(t.projectId);const short=shortageHours(t);
-    const days=t.deadline?daysBetween(todayISO(),t.deadline):null;
+    const ed=effectiveDeadline(t);const days=ed?daysBetween(todayISO(),ed):null;
     let why='';
     if(days!=null&&days<=0)why='本日が締切です。最優先で着手してください。';
     else if(short>0)why=`このままだと締切まで約${short}時間不足しています。今日中に着手を推奨。`;
@@ -1017,20 +1054,47 @@ function renderToday(){
     r.onclick=()=>openTask(t.id);
     rc.appendChild(r);
   });
-  // deadlines
+
+  // 締切が近いもの：プロジェクトで絞り込み可能（複数選択可）・2ヶ月以内を全件・スクロール可能
+  renderTodayFilters();
   const dl=$('#todayDeadlines');dl.innerHTML='';
-  const soon=activeTasks().filter(t=>t.deadline).sort((a,b)=>a.deadline.localeCompare(b.deadline)).slice(0,6);
-  if(!soon.length)dl.innerHTML='<div class="emptyhint">締切設定のあるタスクはありません。</div>';
+  const f=state.ui.todayFilter||'all';
+  const allowed=f==='all'?state.projects.map(p=>p.id):(Array.isArray(f)?f:[f]);
+  const limit=iso(addDays(new Date(),60));
+  const soon=activeTasks().filter(t=>{const ed=effectiveDeadline(t);return ed&&ed<=limit&&allowed.includes(t.projectId);})
+    .sort((a,b)=>effectiveDeadline(a).localeCompare(effectiveDeadline(b)));
+  if(!soon.length)dl.innerHTML='<div class="emptyhint">2ヶ月以内に締切のあるタスクはありません。</div>';
   soon.forEach(t=>{
-    const p=proj(t.projectId);const days=daysBetween(todayISO(),t.deadline);
+    const p=proj(t.projectId);const ed=effectiveDeadline(t);const days=daysBetween(todayISO(),ed);
     const cls=days<=1?'soon':days<=4?'mid':'ok';
     const label=days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`;
     const row=document.createElement('div');row.className='dlrow';
     row.innerHTML=`<span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
-      <span class="pj">${p?esc(p.name.slice(0,6)):''}</span><span class="nm">${esc(t.name)}</span>
+      <span class="pj">${p?esc(p.name.slice(0,6)):''}</span><span class="nm">${esc(t.name)}${!t.deadline?' <span style="opacity:.55;font-size:10px">(自動)</span>':''}</span>
       <span class="left ${cls}">${label}</span>`;
     row.onclick=()=>openTask(t.id);
     dl.appendChild(row);
+  });
+}
+function renderTodayFilters(){
+  const host=$('#todayFilters');if(!host)return;host.innerHTML='';
+  const f=state.ui.todayFilter||'all';
+  const all=document.createElement('div');all.className='chip allc'+(f==='all'?' on':'');
+  all.innerHTML='すべて';all.onclick=()=>{state.ui.todayFilter='all';save();renderToday();};
+  host.appendChild(all);
+  state.projects.forEach(p=>{
+    const sel=Array.isArray(f)?f:(f==='all'?state.projects.map(x=>x.id):[f]);
+    const on=f!=='all'&&sel.includes(p.id);
+    const c=document.createElement('div');c.className='chip'+(on?' on':'');
+    c.innerHTML=`<span class="dot" style="background:${p.color}"></span>${esc(p.name)}`;
+    c.onclick=()=>{
+      let cur=Array.isArray(f)?f.slice():(f==='all'?state.projects.map(x=>x.id):[f]);
+      if(cur.includes(p.id))cur=cur.filter(x=>x!==p.id);else cur.push(p.id);
+      if(cur.length===0)cur=state.projects.map(x=>x.id);
+      state.ui.todayFilter=(cur.length===state.projects.length)?'all':cur;
+      save();renderToday();
+    };
+    host.appendChild(c);
   });
 }
 
@@ -1070,10 +1134,10 @@ function renderProject(){
   $('#pEdit').onclick=()=>editProject(p.id);
   const list=$('#pTasks');
   if(!tasks.length)list.innerHTML='<div class="emptyhint">タスクがありません。「＋ タスク」で追加してください。</div>';
-  tasks.slice().sort((a,b)=>(a.deadline||'9999').localeCompare(b.deadline||'9999')).forEach(t=>list.appendChild(taskRow(t)));
+  tasks.slice().sort((a,b)=>(effectiveDeadline(a)||'9999').localeCompare(effectiveDeadline(b)||'9999')).forEach(t=>list.appendChild(taskRow(t)));
 }
 function nextHint(t){
-  const short=shortageHours(t);const days=t.deadline?daysBetween(todayISO(),t.deadline):null;
+  const short=shortageHours(t);const ed=effectiveDeadline(t);const days=ed?daysBetween(todayISO(),ed):null;
   if(short>0)return `締切まで約${short}時間不足。今日から着手を推奨。`;
   if(days!=null)return `締切まで ${days}日 / 残り ${minToHM(remainingMin(t))}`;
   return `残り ${minToHM(remainingMin(t))}`;
@@ -1084,10 +1148,11 @@ function taskRow(t){
   const total=t.subtasks.length, dn=t.subtasks.filter(s=>s.done).length;
   const ln=lane(t.laneId);const sideName=ln?ln.name:(t.side==='client'?'先方':'自社');
   const period=(t.start&&t.end)?`🗓 ${t.start===t.end?fmtJ(t.start):fmtRange(t.start,t.end)}`:'';
+  const ed=effectiveDeadline(t);
   row.innerHTML=`<div class="chk ${done?'done':''}">${done?'✓':''}</div>
     <div class="body"><div class="nm">${esc(t.name)}</div>
     <div class="sub">
-      ${t.deadline?`<span>📅 締切 ${fmtJ(t.deadline)}</span>`:''}
+      ${ed?`<span>📅 締切 ${fmtJ(ed)}${!t.deadline?'（自動）':''}</span>`:''}
       ${period?`<span>${period}</span>`:''}
       <span class="pill ${t.side}">${esc(sideName)}</span>
       <span class="pill ${t.priority}">${{hi:'優先度 高',mid:'中',lo:'低'}[t.priority]}</span>
@@ -1150,7 +1215,7 @@ function openTask(id,forceProject,opts){
       </div>
       <div style="font-size:12px;color:var(--sub);margin:-6px 0 12px">開始日・終了日を入れるとカレンダーにバーとして表示されます（空ならTODOのみ）。1日だけなら開始＝終了でOK。</div>
       <div class="field row">
-        <div><label>締切</label><input type="date" id="tDead" value="${t.deadline||''}"></div>
+        <div><label>締切${(!t.deadline&&t.end)?`<span style="font-weight:400;color:var(--sub)">（未設定時は終了日 ${fmtJ(t.end)} が締切扱い）</span>`:''}</label><input type="date" id="tDead" value="${t.deadline||''}" placeholder="${t.end||''}"></div>
         <div><label>所要時間</label><select id="tEst">
           ${[['30','30分'],['60','1時間'],['120','2時間'],['240','4時間'],['480','1日(8h)'],['960','2日']].map(([v,l])=>`<option value="${v}" ${+v===t.estMin?'selected':''}>${l}</option>`).join('')}
         </select></div>
@@ -2031,8 +2096,8 @@ function generateScheduleText(opt){
     if(!cards.length)out.push('（予定はありません）');
     cards.forEach(c=>out.push(cardLine(c,true)));
     if(opt.includeTasks){
-      const ts=state.tasks.filter(t=>ids.includes(t.projectId)&&t.deadline&&t.status!=='done').slice().sort((a,b)=>a.deadline.localeCompare(b.deadline));
-      if(ts.length){out.push('');out.push('〈締切〉');ts.forEach(t=>{const p=proj(t.projectId);out.push(`${fmtJ(t.deadline)}｜${p?p.name:''}｜${t.name}`);});}
+      const ts=state.tasks.filter(t=>ids.includes(t.projectId)&&effectiveDeadline(t)&&t.status!=='done').slice().sort((a,b)=>effectiveDeadline(a).localeCompare(effectiveDeadline(b)));
+      if(ts.length){out.push('');out.push('〈締切〉');ts.forEach(t=>{const p=proj(t.projectId);out.push(`${fmtJ(effectiveDeadline(t))}｜${p?p.name:''}｜${t.name}`);});}
     }
   }else{
     projs.forEach(p=>{
@@ -2041,8 +2106,8 @@ function generateScheduleText(opt){
       if(!cards.length)out.push('（予定なし）');
       cards.forEach(c=>out.push(cardLine(c,false)));
       if(opt.includeTasks){
-        const ts=state.tasks.filter(t=>t.projectId===p.id&&t.deadline&&t.status!=='done').slice().sort((a,b)=>a.deadline.localeCompare(b.deadline));
-        if(ts.length){out.push('〈締切〉');ts.forEach(t=>out.push(`${fmtJ(t.deadline)}｜${t.name}`));}
+        const ts=state.tasks.filter(t=>t.projectId===p.id&&effectiveDeadline(t)&&t.status!=='done').slice().sort((a,b)=>effectiveDeadline(a).localeCompare(effectiveDeadline(b)));
+        if(ts.length){out.push('〈締切〉');ts.forEach(t=>out.push(`${fmtJ(effectiveDeadline(t))}｜${t.name}`));}
       }
       out.push('');
     });
