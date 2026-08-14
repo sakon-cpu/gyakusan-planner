@@ -517,9 +517,14 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dlrow .pj{color:var(--sub);font-size:12px;min-width:74px}
 .dlrow .nm{flex:1;font-weight:600}
 .dlrow .left{font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dlrow .dlchk{flex:0 0 auto;width:16px;height:16px;cursor:pointer;accent-color:var(--pri,#2563eb)}
+.dlrow.done{opacity:.62}
+.dlrow.done .nm{text-decoration:line-through}
 .kindtag{flex:0 0 auto;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:10px;white-space:nowrap}
 .kindtag.quick{background:#e0f2fe;color:#0369a1}
 .kindtag.work{background:#fef3c7;color:#92400e}
+.todo2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+@media(max-width:900px){.todo2col{grid-template-columns:1fr}}
 .left.soon{color:var(--danger)} .left.mid{color:var(--warn)} .left.ok{color:var(--sub)}
 
 /* project view */
@@ -903,7 +908,16 @@ body.shared #main{padding-top:34px}
       <div class="sechead">〆切が近い順・全プロジェクト横断（いつまでに何をやるかだけを見る画面）</div>
       <div class="filterchips" id="todoKindFilters" style="margin-bottom:6px"></div>
       <div class="filterchips" id="todayFilters" style="margin-bottom:10px"></div>
-      <div class="card scrollbox" id="todoList" style="max-height:70vh"></div>
+      <div class="todo2col">
+        <div>
+          <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">未完了</div>
+          <div class="card scrollbox" id="todoList" style="max-height:70vh"></div>
+        </div>
+        <div>
+          <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">完了済み（確認・リマインド用に表示）</div>
+          <div class="card scrollbox" id="todoDoneList" style="max-height:70vh"></div>
+        </div>
+      </div>
     </section>
 
     <!-- PROJECT -->
@@ -1161,6 +1175,7 @@ function load(){
   const raw=localStorage.getItem(KEY);
   if(raw){try{state=JSON.parse(raw);migrate();return;}catch(e){}}
   state=seed();
+  migrate();
   save();
 }
 function migrate(){
@@ -1187,6 +1202,14 @@ function migrate(){
     // 既存データの救済：カレンダー登録済みなのに締切が未設定なタスクは、終了日を自動締切として確定させる
     if(!t.deadline&&t.start&&t.end){t.deadline=t.end;t.deadlineAuto=true;}
   });
+  // 一度きりの強制移行（2026-08-14）：既にカレンダーに配置済みの全カードについて、
+  // 手動締切の有無に関わらず「終了日＝締切」に強制的に書き換える（ユーザーからの明示依頼）。
+  if(!state.migratedForceDeadlineV1){
+    (state.tasks||[]).forEach(t=>{
+      if(t.start&&t.end){t.deadline=t.end;t.deadlineAuto=true;}
+    });
+    state.migratedForceDeadlineV1=true;
+  }
   // one-time: fold legacy calendar "cards" into tasks so calendar⇄TODO share one source
   if(Array.isArray(state.cards)){
     state.cards.forEach(c=>{
@@ -1507,28 +1530,42 @@ function renderToday(){
     if(!ad&&bd)return 1;
     return scoreTask(b)-scoreTask(a);
   };
-  const list=activeTasks()
+  // 完了/未完了を問わず対象に含める（完了済みも右側で確認・リマインドできるようにするため）。
+  const base=state.tasks
+    .filter(t=>t.projectId)
     .filter(t=>allowedProjects.includes(t.projectId))
     .filter(t=>kf==='all'||taskKind(t)===kf)
     .sort(byDeadlineAsc);
+  const notDone=base.filter(t=>t.status!=='done');
+  const done=base.filter(t=>t.status==='done');
 
-  const host=$('#todoList');host.innerHTML='';
-  if(!list.length){host.innerHTML='<div class="emptyhint">該当するタスクはありません。</div>';return;}
-  list.forEach(t=>{
-    const p=proj(t.projectId);const ed=effectiveDeadline(t);
-    const kind=taskKind(t);
-    const days=ed?daysBetween(todayISO(),ed):null;
-    const cls=days==null?'':(days<=1?'soon':days<=4?'mid':'ok');
-    const label=days==null?'〆切未設定':(days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`);
-    const row=document.createElement('div');row.className='dlrow';
-    row.innerHTML=`<span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
-      <span class="kindtag ${kind}">${kind==='quick'?'📞 連絡・確認':'📝 立案・企画'}</span>
-      <span class="pj">${p?esc(p.name.slice(0,6)):''}</span>
-      <span class="nm">${esc(t.name)}${ed?` <span style="opacity:.55;font-size:11px;font-weight:400">〆${fmtJ(ed)}${t.deadlineAuto?'（自動）':''}</span>`:''}</span>
-      <span class="left ${cls}">${label}</span>`;
-    row.onclick=()=>openTask(t.id);
-    host.appendChild(row);
-  });
+  const renderCol=(host,list,emptyMsg,isDone)=>{
+    host.innerHTML='';
+    if(!list.length){host.innerHTML=`<div class="emptyhint">${emptyMsg}</div>`;return;}
+    list.forEach(t=>{
+      const p=proj(t.projectId);const ed=effectiveDeadline(t);
+      const kind=taskKind(t);
+      const days=ed?daysBetween(todayISO(),ed):null;
+      const cls=days==null?'':(days<=1?'soon':days<=4?'mid':'ok');
+      const label=days==null?'〆切未設定':(days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`);
+      const row=document.createElement('div');row.className='dlrow'+(isDone?' done':'');
+      row.innerHTML=`<input type="checkbox" class="dlchk" ${isDone?'checked':''}>
+        <span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
+        <span class="kindtag ${kind}">${kind==='quick'?'📞 連絡・確認':'📝 立案・企画'}</span>
+        <span class="pj">${p?esc(p.name.slice(0,6)):''}</span>
+        <span class="nm">${esc(t.name)}${ed?` <span style="opacity:.55;font-size:11px;font-weight:400">〆${fmtJ(ed)}${t.deadlineAuto?'（自動）':''}</span>`:''}</span>
+        <span class="left ${cls}">${label}</span>`;
+      row.querySelector('.dlchk').onclick=e=>{
+        e.stopPropagation();
+        t.status=isDone?'todo':'done';
+        save();afterTaskChange();
+      };
+      row.onclick=()=>openTask(t.id);
+      host.appendChild(row);
+    });
+  };
+  renderCol($('#todoList'),notDone,'該当するタスクはありません。',false);
+  renderCol($('#todoDoneList'),done,'完了済みのタスクはありません。',true);
 }
 function renderTodoKindFilters(){
   const host=$('#todoKindFilters');if(!host)return;host.innerHTML='';
