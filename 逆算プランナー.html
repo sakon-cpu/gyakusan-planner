@@ -511,12 +511,15 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .reco.warn .n{background:var(--warn)}
 .reco.danger .n{background:var(--danger)}
 
-.dlrow{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line)}
+.dlrow{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);cursor:pointer}
 .dlrow:last-child{border-bottom:0}
-.dlrow .dot{width:9px;height:9px;border-radius:50%}
+.dlrow .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
 .dlrow .pj{color:var(--sub);font-size:12px;min-width:74px}
 .dlrow .nm{flex:1;font-weight:600}
-.dlrow .left{font-weight:700;font-size:12px;font-variant-numeric:tabular-nums}
+.dlrow .left{font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kindtag{flex:0 0 auto;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:10px;white-space:nowrap}
+.kindtag.quick{background:#e0f2fe;color:#0369a1}
+.kindtag.work{background:#fef3c7;color:#92400e}
 .left.soon{color:var(--danger)} .left.mid{color:var(--warn)} .left.ok{color:var(--sub)}
 
 /* project view */
@@ -743,11 +746,11 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .unschedTray.show{display:flex}
 .unschedLbl{font-size:12px;color:var(--sub);font-weight:600;white-space:nowrap;flex:0 0 auto}
 .unschedList{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;flex:1 1 auto}
-.unschedCard{flex:0 0 auto;max-width:200px;border-radius:8px;padding:5px 10px;color:#fff;font-size:11.5px;font-weight:700;
-  cursor:grab;border:2px dashed rgba(255,255,255,.85);box-shadow:0 1px 4px rgba(10,15,30,.18);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:none}
+.unschedCard{flex:0 0 auto;max-width:132px;border-radius:6px;padding:3px 7px;color:#fff;font-size:10px;font-weight:700;
+  cursor:grab;border:1.5px dashed rgba(255,255,255,.85);box-shadow:0 1px 3px rgba(10,15,30,.16);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:none;line-height:1.35}
 .unschedCard:active{cursor:grabbing}
-.unschedCard .dl{font-size:9.5px;font-weight:600;opacity:.85;display:block;overflow:hidden;text-overflow:ellipsis}
+.unschedCard .dl{font-size:8px;font-weight:600;opacity:.85;display:block;overflow:hidden;text-overflow:ellipsis}
 .unschedCard.dragsource{opacity:.25!important}
 
 /* inbox */
@@ -878,7 +881,7 @@ body.shared #main{padding-top:34px}
 <div id="app">
   <aside id="nav">
     <div class="brand">逆算プランナー<small>DEADLINE OS</small></div>
-    <button class="navbtn active" data-view="today"><span class="ic">◎</span>TODAY</button>
+    <button class="navbtn active" data-view="today"><span class="ic">◎</span>TODO</button>
     <button class="navbtn" data-view="calendar"><span class="ic">▦</span>CALENDAR</button>
     <button class="navbtn" data-view="inbox"><span class="ic">✉</span>INBOX <span id="inboxcount"></span></button>
     <div class="sec">PROJECTS</div>
@@ -891,29 +894,16 @@ body.shared #main{padding-top:34px}
   </aside>
 
   <div id="main">
-    <!-- TODAY -->
+    <!-- TODO -->
     <section class="view active" id="view-today">
       <div class="pagehead">
-        <div><h1>TODAY</h1><div class="date" id="todayDate"></div></div>
-        <div class="tools"><button class="btn pri" id="btnQuickAdd">＋ タスク追加</button>
-          <button class="btn" id="btnReplan">↻ 逆算リプラン</button></div>
+        <div><h1>TODO</h1><div class="date" id="todayDate"></div></div>
+        <div class="tools"><button class="btn pri" id="btnQuickAdd">＋ タスク追加</button></div>
       </div>
-      <div class="grid2">
-        <div>
-          <div class="sechead">今日やること（〆切が近い順・全プロジェクト横断）</div>
-          <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">📞 連絡・報告・確認</div>
-          <div class="card" id="todayQuick" style="margin-bottom:18px"></div>
-          <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">📝 立案・企画（時間のかかるもの）</div>
-          <div class="card" id="todayWork"></div>
-        </div>
-        <div class="todayside">
-          <div class="sechead">AIの今日の推奨</div>
-          <div class="card recobox" id="todayReco"></div>
-          <div class="sechead" style="margin-top:20px">⚠ 締切が近いもの（2ヶ月以内）</div>
-          <div class="filterchips" id="todayFilters" style="margin-bottom:8px"></div>
-          <div class="card scrollbox" id="todayDeadlines"></div>
-        </div>
-      </div>
+      <div class="sechead">〆切が近い順・全プロジェクト横断（いつまでに何をやるかだけを見る画面）</div>
+      <div class="filterchips" id="todoKindFilters" style="margin-bottom:6px"></div>
+      <div class="filterchips" id="todayFilters" style="margin-bottom:10px"></div>
+      <div class="card scrollbox" id="todoList" style="max-height:70vh"></div>
     </section>
 
     <!-- PROJECT -->
@@ -1031,7 +1021,7 @@ body.shared #main{padding-top:34px}
           <select id="setCap">
             <option value="60">1時間</option><option value="120">2時間</option><option value="180">3時間</option><option value="240">4時間</option><option value="480">上限なし(8h)</option>
           </select></div>
-        <div style="color:var(--sub);font-size:12px">締切から逆算し、作業可能時間・土日/祝日・確定予定・Google予定の空きを見て、複数日に作業を自動配置します。TODAYと1日表示に反映されます。</div>
+        <div style="color:var(--sub);font-size:12px">締切から逆算し、作業可能時間・土日/祝日・確定予定・Google予定の空きを見て、複数日に作業を自動配置します（カレンダーの空き状況チェック等に利用）。</div>
         <button class="btn pri" id="setReplan" style="margin-top:12px">↻ いま逆算して仮組みする</button>
       </div>
     </section>
@@ -1178,6 +1168,7 @@ function migrate(){
   if(!state.blocks)state.blocks=[];
   if(state.settings&&state.settings.dailyCap==null)state.settings.dailyCap=180;
   if(state.ui&&state.ui.todayFilter==null)state.ui.todayFilter='all';
+  if(state.ui&&state.ui.todoKindFilter==null)state.ui.todoKindFilter='all';
   if(state.ui&&state.ui.printShowDuration==null)state.ui.printShowDuration=true;
   if(state.ui&&state.ui.showDurWM==null)state.ui.showDurWM=true;
   (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||/client/i.test(l.name)))?'client':'self';});
@@ -1192,6 +1183,9 @@ function migrate(){
     if(!t.laneId)t.laneId=(t.side==='client'?firstClient():firstSelf());
     if(!t.side){const ln=lane(t.laneId);t.side=ln&&ln.kind==='client'?'client':'self';}
     if(!t.comms)t.comms=[];if(!t.subtasks)t.subtasks=[];
+    if(t.deadlineAuto==null)t.deadlineAuto=false;
+    // 既存データの救済：カレンダー登録済みなのに締切が未設定なタスクは、終了日を自動締切として確定させる
+    if(!t.deadline&&t.start&&t.end){t.deadline=t.end;t.deadlineAuto=true;}
   });
   // one-time: fold legacy calendar "cards" into tasks so calendar⇄TODO share one source
   if(Array.isArray(state.cards)){
@@ -1233,7 +1227,7 @@ function seed(){
       {id:uid(),projectId:p3,laneId:lSelf,name:'経費処理',start:T,end:T,deadline:T,estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
       {id:uid(),projectId:null,laneId:lSelf,name:'名刺デザインの見積を取る',start:'',end:'',deadline:'',estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
     ],
-    ui:{gran:'3month',anchor:iso(new Date(t.getFullYear(),t.getMonth(),1)),filter:'all',calDay:T,todayFilter:'all',printShowDuration:true,showDurWM:true}
+    ui:{gran:'3month',anchor:iso(new Date(t.getFullYear(),t.getMonth(),1)),filter:'all',calDay:T,todayFilter:'all',todoKindFilter:'all',printShowDuration:true,showDurWM:true}
   };
 }
 
@@ -1318,6 +1312,13 @@ function remainingMin(t){return Math.round(t.estMin*(1-taskProgress(t)));}
 // 明示的な締切が未設定でも、カレンダーに登録した終了日（単発予定ならその日）を締切として自動的に扱う。
 // 提出物やMTGは「カレンダー上のその日」＝実質の締切であることがほとんどなので、二重入力をなくすための仕様。
 function effectiveDeadline(t){return t.deadline||t.end||null;}
+// カレンダーに登録（start/end確定）された瞬間、その終了日を締切として実際に書き込む。
+// t.deadlineAutoフラグで「自動で入れた締切」か「本人が手で入れた締切」かを区別し、
+// 自動セット分だけは終了日の変更（延長・短縮・移動）に追従して更新し続ける。
+function applyAutoDeadline(t){
+  if(!t.start||!t.end)return;
+  if(!t.deadline||t.deadlineAuto){t.deadline=t.end;t.deadlineAuto=true;}
+}
 // タスク名・所要時間から「連絡・報告・確認」系か「立案・企画」系かを推定する（手動フィールドを増やさず自動判定）
 function taskKind(t){
   const heavyKw=/企画|構成|脚本|提案|立案|設計|執筆|制作|撮影|編集|台本|プロット|シナリオ|資料作成/;
@@ -1484,78 +1485,60 @@ function updateCloudNav(){
 }
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
-/* ---------- TODAY ---------- */
+/* ---------- TODO ---------- */
 function renderToday(){
   const now=new Date();
   $('#todayDate').textContent=`${now.getMonth()+1}月${now.getDate()}日 ${WK[now.getDay()]}曜日`;
-  ensureSchedule(); // 1日表示や逆算リプラン等、他画面が state.blocks を使うため維持
+  ensureSchedule(); // 1日表示等、他画面が state.blocks を使うため維持
 
-  // 今日やること：全プロジェクト横断・締切が近い順にピックし、「連絡確認系」と「立案企画系」に分けて表示する
-  const withDL=activeTasks().filter(t=>effectiveDeadline(t));
-  const withoutDL=activeTasks().filter(t=>!effectiveDeadline(t));
-  const byUrgency=(a,b)=>{
+  // TODO：種別（連絡・報告・確認／立案・企画）やプロジェクトで区切らず、単一の一覧として
+  // 〆切が近い順に並べる。〆切未設定のものは末尾へ。種別・プロジェクトはタグ／チップで絞り込み。
+  renderTodoKindFilters();
+  renderTodayFilters();
+
+  const kf=state.ui.todoKindFilter||'all';
+  const pf=state.ui.todayFilter||'all';
+  const allowedProjects=pf==='all'?state.projects.map(p=>p.id):(Array.isArray(pf)?pf:[pf]);
+
+  const byDeadlineAsc=(a,b)=>{
     const ad=effectiveDeadline(a),bd=effectiveDeadline(b);
-    if(ad&&bd)return ad.localeCompare(bd)||scoreTask(b)-scoreTask(a);
+    if(ad&&bd)return ad.localeCompare(bd);
+    if(ad&&!bd)return -1;
+    if(!ad&&bd)return 1;
     return scoreTask(b)-scoreTask(a);
   };
-  const picked=[...withDL.sort(byUrgency),...withoutDL.sort(byUrgency)];
-  const renderPickList=(host,list,emptyMsg)=>{
-    host.innerHTML='';
-    if(!list.length){host.innerHTML=`<div class="todaykind-empty">${emptyMsg}</div>`;return;}
-    list.forEach(t=>{
-      const p=proj(t.projectId);const ed=effectiveDeadline(t);
-      const days=ed?daysBetween(todayISO(),ed):null;
-      const label=days==null?'':(days<0?`${-days}日超過`:days===0?'本日締切':`あと${days}日`);
-      const durColor=days==null?'var(--sub)':(days<=1?'var(--danger)':days<=4?'var(--warn)':'var(--sub)');
-      const row=document.createElement('div');row.className='block';
-      row.innerHTML=`<div class="bar" style="background:${p?p.color:'#94a3b8'}"></div>
-        <div class="ttl">${esc(t.name)}<div class="meta">${p?esc(p.name):''}${ed?` ・締切 ${fmtJ(ed)}${!t.deadline?'（自動）':''}`:''}</div></div>
-        <div class="dur" style="color:${durColor};font-weight:700">${label}</div>`;
-      row.onclick=()=>openTask(t.id);
-      host.appendChild(row);
-    });
-  };
-  renderPickList($('#todayQuick'),picked.filter(t=>taskKind(t)==='quick').slice(0,6),'連絡・確認系のタスクはありません。');
-  renderPickList($('#todayWork'),picked.filter(t=>taskKind(t)==='work').slice(0,6),'立案・企画系のタスクはありません。');
+  const list=activeTasks()
+    .filter(t=>allowedProjects.includes(t.projectId))
+    .filter(t=>kf==='all'||taskKind(t)===kf)
+    .sort(byDeadlineAsc);
 
-  // reco
-  const rc=$('#todayReco');rc.innerHTML='';
-  const ranked=rankedTasks().slice(0,3);
-  if(!ranked.length)rc.innerHTML='<div class="emptyhint" style="padding:6px">推奨はありません。</div>';
-  ranked.forEach((t,i)=>{
-    const p=proj(t.projectId);const short=shortageHours(t);
-    const ed=effectiveDeadline(t);const days=ed?daysBetween(todayISO(),ed):null;
-    let why='';
-    if(days!=null&&days<=0)why='本日が締切です。最優先で着手してください。';
-    else if(short>0)why=`このままだと締切まで約${short}時間不足しています。今日中に着手を推奨。`;
-    else if(days!=null)why=`締切まであと${days}日。残り作業 ${minToHM(remainingMin(t))}。`;
-    else why=`残り作業 ${minToHM(remainingMin(t))}。`;
-    const cls=(days!=null&&days<=0)?'danger':(short>0?'warn':'');
-    const r=document.createElement('div');r.className='reco '+cls;
-    r.innerHTML=`<div class="n">${i+1}</div><div class="txt"><b>${p?esc(p.name)+' / ':''}${esc(t.name)}</b><div class="why">${why}</div></div>`;
-    r.onclick=()=>openTask(t.id);
-    rc.appendChild(r);
-  });
-
-  // 締切が近いもの：プロジェクトで絞り込み可能（複数選択可）・2ヶ月以内を全件・スクロール可能
-  renderTodayFilters();
-  const dl=$('#todayDeadlines');dl.innerHTML='';
-  const f0=state.ui.todayFilter||'all';
-  const allowed=f0==='all'?state.projects.map(p=>p.id):(Array.isArray(f0)?f0:[f0]);
-  const limit=iso(addDays(new Date(),60));
-  const soon=activeTasks().filter(t=>{const ed=effectiveDeadline(t);return ed&&ed<=limit&&allowed.includes(t.projectId);})
-    .sort((a,b)=>effectiveDeadline(a).localeCompare(effectiveDeadline(b)));
-  if(!soon.length)dl.innerHTML='<div class="emptyhint">2ヶ月以内に締切のあるタスクはありません。</div>';
-  soon.forEach(t=>{
-    const p=proj(t.projectId);const ed=effectiveDeadline(t);const days=daysBetween(todayISO(),ed);
-    const cls=days<=1?'soon':days<=4?'mid':'ok';
-    const label=days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`;
+  const host=$('#todoList');host.innerHTML='';
+  if(!list.length){host.innerHTML='<div class="emptyhint">該当するタスクはありません。</div>';return;}
+  list.forEach(t=>{
+    const p=proj(t.projectId);const ed=effectiveDeadline(t);
+    const kind=taskKind(t);
+    const days=ed?daysBetween(todayISO(),ed):null;
+    const cls=days==null?'':(days<=1?'soon':days<=4?'mid':'ok');
+    const label=days==null?'〆切未設定':(days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`);
     const row=document.createElement('div');row.className='dlrow';
     row.innerHTML=`<span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
-      <span class="pj">${p?esc(p.name.slice(0,6)):''}</span><span class="nm">${esc(t.name)}${!t.deadline?' <span style="opacity:.55;font-size:10px">(自動)</span>':''}</span>
+      <span class="kindtag ${kind}">${kind==='quick'?'📞 連絡・確認':'📝 立案・企画'}</span>
+      <span class="pj">${p?esc(p.name.slice(0,6)):''}</span>
+      <span class="nm">${esc(t.name)}${ed?` <span style="opacity:.55;font-size:11px;font-weight:400">〆${fmtJ(ed)}${t.deadlineAuto?'（自動）':''}</span>`:''}</span>
       <span class="left ${cls}">${label}</span>`;
     row.onclick=()=>openTask(t.id);
-    dl.appendChild(row);
+    host.appendChild(row);
+  });
+}
+function renderTodoKindFilters(){
+  const host=$('#todoKindFilters');if(!host)return;host.innerHTML='';
+  const kf=state.ui.todoKindFilter||'all';
+  const opts=[['all','すべて'],['quick','連絡・報告・確認のみ'],['work','立案・企画（時間のかかるもの）のみ']];
+  opts.forEach(([v,label])=>{
+    const c=document.createElement('div');c.className='chip'+(kf===v?' on':'')+(v==='all'?' allc':'');
+    c.innerHTML=label;
+    c.onclick=()=>{state.ui.todoKindFilter=v;save();renderToday();};
+    host.appendChild(c);
   });
 }
 function renderTodayFilters(){
@@ -1565,7 +1548,7 @@ function renderTodayFilters(){
   const f=state.ui.todayFilter||'all';
   const selected=Array.isArray(f)?f:[];
   const all=document.createElement('div');all.className='chip allc'+(f==='all'?' on':'');
-  all.innerHTML='すべて';all.onclick=()=>{state.ui.todayFilter='all';save();renderToday();};
+  all.innerHTML='全プロジェクト';all.onclick=()=>{state.ui.todayFilter='all';save();renderToday();};
   host.appendChild(all);
   state.projects.forEach(p=>{
     const on=selected.includes(p.id);
@@ -1635,7 +1618,7 @@ function taskRow(t){
   row.innerHTML=`<div class="chk ${done?'done':''}">${done?'✓':''}</div>
     <div class="body"><div class="nm">${esc(t.name)}</div>
     <div class="sub">
-      ${ed?`<span>📅 締切 ${fmtJ(ed)}${!t.deadline?'（自動）':''}</span>`:''}
+      ${ed?`<span>📅 締切 ${fmtJ(ed)}${t.deadlineAuto?'（自動）':''}</span>`:''}
       ${period?`<span>${period}</span>`:''}
       <span class="pill ${t.side}">${esc(sideName)}</span>
       <span class="pill ${t.priority}">${{hi:'優先度 高',mid:'中',lo:'低'}[t.priority]}</span>
@@ -1675,7 +1658,7 @@ function openTask(id,forceProject,opts){
   const isNew=!t;
   if(isNew){
     t={id:uid(),projectId:forceProject||(opts.withDates?(state.projects[0]&&state.projects[0].id):null),laneId:opts.presetLane||defaultLaneId('self'),
-      name:'',start:'',end:'',deadline:'',estMin:60,priority:'mid',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]};
+      name:'',start:'',end:'',deadline:'',deadlineAuto:false,estMin:60,priority:'mid',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]};
     if(opts.withDates){t.start=opts.presetDate||state.ui.calDay||todayISO();t.end=t.start;}
     if(opts.presetLane){const ln=lane(opts.presetLane);if(ln)t.side=ln.kind==='client'?'client':'self';}
   }
@@ -1750,7 +1733,10 @@ function openTask(id,forceProject,opts){
     if(draft.start&&!draft.end)draft.end=draft.start;
     if(draft.end&&!draft.start)draft.start=draft.end;
     if(draft.start&&draft.end&&draft.end<draft.start)draft.end=draft.start;
-    draft.deadline=$('#tDead').value||'';
+    const deadInput=$('#tDead').value||'';
+    if(deadInput){draft.deadline=deadInput;draft.deadlineAuto=false;}
+    else if(draft.start&&draft.end){draft.deadline=draft.end;draft.deadlineAuto=true;}
+    else{draft.deadline='';draft.deadlineAuto=false;}
     draft.estMin=+$('#tEst').value;
     draft.summary=$('#tSum').value;
     draft.notes=$('#tNotes').value;
@@ -2232,7 +2218,9 @@ function startDrag(el,card,ctx,mode,ev){
     clearHot();
     const changed=prop.start!==origStart||prop.end!==origEnd||prop.lane!==origLane;
     if(changed){
-      card.start=prop.start;card.end=prop.end;card.laneId=prop.lane;const ln=lane(prop.lane);if(ln)card.side=ln.kind==='client'?'client':'self';save();toast('予定を移動しました');
+      card.start=prop.start;card.end=prop.end;card.laneId=prop.lane;const ln=lane(prop.lane);if(ln)card.side=ln.kind==='client'?'client':'self';
+      applyAutoDeadline(card);
+      save();toast('予定を移動しました');
     } else if(mode==='move'&&lastEv){
       // 日付・レーンが変わらず、別カードの上でドロップされた場合は左右の並び順(サブ列)を入れ替える
       // ※単一案件表示中の並びと、複数案件表示中の並びは別々に記憶する（ctx.ordKeyで切替）
@@ -2320,7 +2308,7 @@ function startGroupDrag(el,card,ctx,ev,group){
     clearHot();
     if(!active){ selectCalCard(el,card.id,ev.shiftKey||ev.metaKey||ev.ctrlKey); return; }
     if(dayShift!==0){
-      group.forEach(t=>{const o=orig[t.id];t.start=iso(addDays(parseISO(o.start),dayShift));t.end=iso(addDays(parseISO(o.end),dayShift));});
+      group.forEach(t=>{const o=orig[t.id];t.start=iso(addDays(parseISO(o.start),dayShift));t.end=iso(addDays(parseISO(o.end),dayShift));if(t.deadlineAuto)t.deadline=t.end;});
       save();toast(`${group.length}件をまとめて移動しました（間隔はそのまま）`);
     }
     renderCalendar();renderNav();
@@ -2344,7 +2332,7 @@ function renderUnscheduled(){
     el.className='unschedCard';el.dataset.taskId=t.id;
     el.style.background=projColor(t.projectId);
     const ed=effectiveDeadline(t);
-    el.innerHTML=`${esc(t.name)}${ed?`<span class="dl">〆${fmtJ(ed)}${!t.deadline?'（自動）':''}</span>`:''}`;
+    el.innerHTML=`${esc(t.name)}${ed?`<span class="dl">〆${fmtJ(ed)}${t.deadlineAuto?'（自動）':''}</span>`:''}`;
     el.title=(p?p.name+' / ':'')+t.name;
     el.addEventListener('pointerdown',ev=>{ if(ev.button!==0)return; startPoolDrag(el,t,ev); });
     list.appendChild(el);
@@ -2392,6 +2380,7 @@ function startPoolDrag(el,task,ev){
     if(hit&&hit.date&&hit.lane){
       task.start=hit.date;task.end=hit.date;task.laneId=hit.lane;
       const ln=lane(hit.lane);if(ln)task.side=ln.kind==='client'?'client':'self';
+      applyAutoDeadline(task);
       save();toast('カレンダーに登録しました');
       afterTaskChange();
     }
@@ -3373,7 +3362,6 @@ function wire(){
   $('#navGoogle').onclick=async()=>{if(gTokenValid()){switchView('settings');}else{await gConnect(true);updateGoogleNav();}};
   $('#navCloud').onclick=()=>switchView('settings');
   $('#btnQuickAdd').onclick=()=>openTask(null);
-  $('#btnReplan').onclick=()=>{generateSchedule();renderToday();if(current==='calendar')renderCalendar();toast('締切から逆算して仮組みしました');};
   $('#btnInboxAdd').onclick=()=>openTask(null);
   $('#inboxQuickForm').addEventListener('submit',e=>{
     e.preventDefault();
