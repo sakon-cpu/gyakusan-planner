@@ -52,6 +52,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .btn:hover{border-color:#c9ccd6;background:#fbfbfd}
 .btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.pri:hover{background:#255fe0}
+.btn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .btn.sm{padding:5px 10px;font-size:12px}
 .btn.ghost{background:transparent;border-color:transparent;color:var(--sub)}
 .btn.ghost:hover{background:#eef0f4;color:var(--ink)}
@@ -288,16 +289,21 @@ input,select,textarea{font-family:inherit;font-size:14px}
 
 .emptycal{padding:40px;text-align:center;color:var(--sub)}
 
-/* 1週間以上の予定に表示する「作業日数」の透かし */
-.calcard .durwm{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-16deg);
-  font-size:22px;font-weight:800;color:rgba(255,255,255,.32);letter-spacing:.5px;white-space:nowrap;
-  pointer-events:none;z-index:0;text-shadow:0 1px 2px rgba(0,0,0,.12)}
-.calcard.client .durwm{color:rgba(229,72,77,.28)}
-.months.g-1month .calcard .durwm{font-size:17px}
+/* 1週間以上の予定に表示する「作業日数」の透かし（小さく・回転なし・右下に控えめに表示。色はカード自体の文字色を継承） */
+.calcard .durwm{position:absolute;right:5px;bottom:2px;font-size:9px;font-weight:800;opacity:.5;
+  letter-spacing:.2px;white-space:nowrap;pointer-events:none;z-index:0}
+.months.g-3month .calcard .durwm{font-size:8px;right:4px}
 #printScale.hidedurwm .durwm{display:none}
 /* リサイズ中に表示する「今離したら何日間になるか」のライブ表示 */
 .dragdurtip{position:fixed;z-index:9999;pointer-events:none;background:#111827;color:#fff;font-weight:800;
   font-size:12.5px;padding:5px 10px;border-radius:7px;box-shadow:0 8px 22px rgba(10,15,30,.35);white-space:nowrap}
+/* カードの塗りつぶし／枠線スタイルをワンタッチで切り替えるボタン（ホバー時のみ表示） */
+.calcard .stylebtn{position:absolute;top:2px;right:2px;width:14px;height:14px;border:0;border-radius:50%;
+  background:rgba(0,0,0,.28);color:#fff;font-size:9px;line-height:14px;text-align:center;padding:0;margin:0;
+  cursor:pointer;opacity:0;transition:opacity .12s;z-index:4}
+.calcard.outline .stylebtn{background:rgba(0,0,0,.14)}
+.calcard:hover .stylebtn{opacity:1}
+.months.g-3month .calcard .stylebtn{width:11px;height:11px;font-size:7px;line-height:11px}
 
 /* 未登録タスク トレイ */
 .unschedTray{display:none;align-items:center;gap:10px;padding:8px 4px;margin-bottom:6px}
@@ -505,6 +511,7 @@ body.shared #main{padding-top:34px}
           <button data-g="1day">1日</button>
         </div>
         <div class="filterchips" id="calFilters"></div>
+        <button class="btn sm" id="calDurToggle">📏 日数表示</button>
         <div class="lanetools" id="laneTools"></div>
       </div>
       <div class="unschedTray" id="unschedTray">
@@ -739,6 +746,7 @@ function migrate(){
   if(state.settings&&state.settings.dailyCap==null)state.settings.dailyCap=180;
   if(state.ui&&state.ui.todayFilter==null)state.ui.todayFilter='all';
   if(state.ui&&state.ui.printShowDuration==null)state.ui.printShowDuration=true;
+  if(state.ui&&state.ui.showDurWM==null)state.ui.showDurWM=true;
   (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||/client/i.test(l.name)))?'client':'self';});
   (state.projects||[]).forEach(p=>{if(p.client==null)p.client='';});
   const firstSelf=()=>{const l=(state.lanes||[]).find(x=>x.kind==='self')||state.lanes[0];return l?l.id:null;};
@@ -792,7 +800,7 @@ function seed(){
       {id:uid(),projectId:p3,laneId:lSelf,name:'経費処理',start:T,end:T,deadline:T,estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
       {id:uid(),projectId:null,laneId:lSelf,name:'名刺デザインの見積を取る',start:'',end:'',deadline:'',estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
     ],
-    ui:{gran:'3month',anchor:iso(new Date(t.getFullYear(),t.getMonth(),1)),filter:'all',calDay:T,todayFilter:'all',printShowDuration:true}
+    ui:{gran:'3month',anchor:iso(new Date(t.getFullYear(),t.getMonth(),1)),filter:'all',calDay:T,todayFilter:'all',printShowDuration:true,showDurWM:true}
   };
 }
 
@@ -1399,6 +1407,8 @@ function rowHeight(){
 function renderCalendar(){
   renderCalFilters();renderLaneTools();
   if(!READONLY)renderUnscheduled();
+  const durBtn=$('#calDurToggle');
+  if(durBtn)durBtn.classList.toggle('on',state.ui.showDurWM!==false);
   let cols=granColumns();
   // 3ヶ月表示：トラックパッドの二本指スワイプでシームレスに月をまたげるよう、前後に1ヶ月ずつ
   // 見えないバッファ列を足しておく（印刷時は data-buf="1" の列をCSSで非表示にして3ヶ月だけ出す）。
@@ -1486,18 +1496,38 @@ function renderCalendar(){
         const e=Math.min(col.days.length-1,daysBetween(start,card.end));
         const top=s*H, height=(e-s+1)*H-3;
         const done=card.status==='done';
-        const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self')+(done?' donecard':'')+(SELECTED_CARDS.has(card.id)?' selected':'');
+        const cardStyle=card.cardStyle==='outline'?'outline':'fill';
+        const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self')+(done?' donecard':'')+(SELECTED_CARDS.has(card.id)?' selected':'')+(cardStyle==='outline'?' outline':'');
         el.style.top=(top+1)+'px';
         el.style.height=Math.max(20,height)+'px';
         el.style.left=`calc(48px + (100% - 48px) * ${(laneCum[li]+cardSub/K*laneW[li])/100} + 2px)`;
         el.style.width=`calc((100% - 48px) * ${(laneW[li]/K)/100} - 4px)`;
-        el.style.background=projColor(card.projectId);
+        const pc=projColor(card.projectId);
+        if(cardStyle==='outline'){
+          el.style.background='#fff';el.style.color=pc;
+          el.style.border=`2px ${ln.kind==='client'?'dashed':'solid'} ${pc}`;
+        } else {
+          el.style.background=pc;
+        }
         const durDays=cardDurationDays(card.start,card.end);
-        el.innerHTML=`<div class="rz t"><i></i></div>${durDays>=7?`<div class="durwm">${durDays}日間</div>`:''}<div class="lbl">${done?'✓ ':''}${esc(card.name)}</div>
+        const showDur=state.ui.showDurWM!==false;
+        el.innerHTML=`<div class="rz t"><i></i></div>${(showDur&&durDays>=7)?`<div class="durwm">${durDays}日間</div>`:''}<div class="lbl">${done?'✓ ':''}${esc(card.name)}</div>
           ${showSummary&&card.summary?`<div class="sm">${esc(card.summary)}</div>`:''}
-          <div class="rz b"><i></i></div>`;
+          <div class="rz b"><i></i></div>
+          ${READONLY?'':`<button type="button" class="stylebtn" title="塗りつぶし⇄枠線を切り替え">${cardStyle==='outline'?'○':'●'}</button>`}`;
         el.dataset.cardId=card.id;el.dataset.sub=cardSub;
-        if(READONLY)el.style.cursor='default'; else attachCardHandlers(el,card,{col,lanes,H,grid,layer,mc,laneCards,cardSub,K,ordKey});
+        if(READONLY)el.style.cursor='default'; else {
+          attachCardHandlers(el,card,{col,lanes,H,grid,layer,mc,laneCards,cardSub,K,ordKey});
+          const styleBtn=el.querySelector('.stylebtn');
+          if(styleBtn){
+            styleBtn.addEventListener('pointerdown',e=>e.stopPropagation());
+            styleBtn.addEventListener('click',e=>{
+              e.stopPropagation();e.preventDefault();
+              card.cardStyle=(card.cardStyle==='outline')?'fill':'outline';
+              save();renderCalendar();
+            });
+          }
+        }
         layer.appendChild(el);
         fitCardText(el);
       });
@@ -1673,7 +1703,12 @@ function startDrag(el,card,ctx,mode,ev){
     if(mode==='move'){
       ghost=document.createElement('div');
       ghost.className='dragghost'+(el.classList.contains('client')?' client':'');
-      if(!el.classList.contains('client'))ghost.style.background=projColor(card.projectId);
+      if(el.classList.contains('outline')){
+        const pc=projColor(card.projectId);
+        ghost.style.background='#fff';ghost.style.color=pc;ghost.style.border=`2px solid ${pc}`;
+      } else if(!el.classList.contains('client')){
+        ghost.style.background=projColor(card.projectId);
+      }
       ghost.style.width=gw+'px';ghost.style.height=gh+'px';
       ghost.innerHTML=el.querySelector('.lbl')?`<div class="lbl">${el.querySelector('.lbl').innerHTML}</div>`:'';
       const sm=el.querySelector('.sm');if(sm)ghost.innerHTML+=`<div class="sm">${sm.innerHTML}</div>`;
@@ -2702,6 +2737,7 @@ function wire(){
   $('#calPrev').onclick=()=>calStep(-1);
   $('#calNext').onclick=()=>calStep(1);
   $('#calToday').onclick=()=>{const t=new Date();state.ui.anchor=iso(new Date(t.getFullYear(),t.getMonth(),1));state.ui.calDay=todayISO();save();renderCalendar();};
+  $('#calDurToggle').onclick=()=>{state.ui.showDurWM=state.ui.showDurWM===false;save();renderCalendar();};
   $$('#granSwitch button').forEach(b=>b.onclick=()=>{state.ui.gran=b.dataset.g;save();renderCalendar();});
   // settings
   $('#setWorkStart').onchange=e=>{state.settings.workStart=e.target.value;save();generateSchedule();};
