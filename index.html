@@ -838,8 +838,13 @@ function fitCardText(el){
   }
 }
 // additive=true（Shift/⌘/Ctrlクリック）の場合はトグルで複数選択に追加、falseなら単独選択に切り替える
+// （すでにそのカード1枚だけが選択されている状態で、もう一度普通にクリックした場合は選択解除＝未選択に戻す）
 function selectCalCard(el,id,additive){
-  if(!additive){SELECTED_CARDS.clear();SELECTED_CARDS.add(id);}
+  if(!additive){
+    const wasSoleSelected=SELECTED_CARDS.size===1&&SELECTED_CARDS.has(id);
+    SELECTED_CARDS.clear();
+    if(!wasSoleSelected)SELECTED_CARDS.add(id);
+  }
   else{ if(SELECTED_CARDS.has(id))SELECTED_CARDS.delete(id); else SELECTED_CARDS.add(id); }
   $$('.calcard').forEach(c=>c.classList.toggle('selected',SELECTED_CARDS.has(c.dataset.cardId)));
 }
@@ -1466,6 +1471,12 @@ function renderCalendar(){
       mc.querySelectorAll('.dayrow').forEach(row=>{
         const gut=row.querySelector('.gut');if(!gut)return;
         gut.addEventListener('dblclick',e=>{e.stopPropagation();openTask(null,null,{withDates:true,presetDate:row.dataset.date,presetLane:lanes[0]&&lanes[0].id});});
+      });
+      // 空白部分（カード以外）をクリックしたら選択中のカードを解除する
+      const dg=mc.querySelector('.daygrid');
+      if(dg)dg.addEventListener('click',e=>{
+        if(e.target.closest('.calcard'))return;
+        if(SELECTED_CARDS.size){SELECTED_CARDS.clear();$$('.calcard').forEach(c=>c.classList.remove('selected'));}
       });
     }
     // place cards, packing overlapping cards within a lane into sub-columns
