@@ -288,9 +288,24 @@ input,select,textarea{font-family:inherit;font-size:14px}
 
 .emptycal{padding:40px;text-align:center;color:var(--sub)}
 
+/* 未登録タスク トレイ */
+.unschedTray{display:none;align-items:center;gap:10px;padding:8px 4px;margin-bottom:6px}
+.unschedTray.show{display:flex}
+.unschedLbl{font-size:12px;color:var(--sub);font-weight:600;white-space:nowrap;flex:0 0 auto}
+.unschedList{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;flex:1 1 auto}
+.unschedCard{flex:0 0 auto;max-width:200px;border-radius:8px;padding:5px 10px;color:#fff;font-size:11.5px;font-weight:700;
+  cursor:grab;border:2px dashed rgba(255,255,255,.85);box-shadow:0 1px 4px rgba(10,15,30,.18);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:none}
+.unschedCard:active{cursor:grabbing}
+.unschedCard .dl{font-size:9.5px;font-weight:600;opacity:.85;display:block;overflow:hidden;text-overflow:ellipsis}
+.unschedCard.dragsource{opacity:.25!important}
+
 /* inbox */
 .inbox .trow .body .nm{font-weight:600}
 .inboxhint{color:var(--sub);font-size:13px;margin-bottom:14px}
+.inboxQuick{display:flex;gap:8px;margin-bottom:16px}
+.inboxQuick input{flex:1 1 auto;padding:11px 14px;border-radius:10px;border:1px solid var(--line);font-size:14px;background:#fff}
+.inboxQuick input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 
 /* settings */
 .setgrid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
@@ -481,6 +496,10 @@ body.shared #main{padding-top:34px}
         <div class="filterchips" id="calFilters"></div>
         <div class="lanetools" id="laneTools"></div>
       </div>
+      <div class="unschedTray" id="unschedTray">
+        <div class="unschedLbl">📥 未登録タスク（ドラッグでカレンダーに登録）</div>
+        <div class="unschedList" id="unschedList"></div>
+      </div>
       <div class="calwrap" id="calWrap">
         <div id="printScale">
           <div class="printhead">
@@ -496,9 +515,13 @@ body.shared #main{padding-top:34px}
     <section class="view inbox" id="view-inbox">
       <div class="pagehead">
         <div><h1>INBOX</h1><div class="date">まだ整理していないタスク</div></div>
-        <div class="tools"><button class="btn pri" id="btnInboxAdd">＋ 追加</button></div>
+        <div class="tools"><button class="btn" id="btnInboxAdd">＋ 詳細を入力して追加</button></div>
       </div>
-      <div class="inboxhint">思いついたタスクをここに放り込み、あとでプロジェクトと締切を割り当てます。プロジェクトを設定すると自動で該当プロジェクトへ移動します。</div>
+      <div class="inboxhint">思いついたことをすぐ下の欄に書いてEnter（またはボタン）で保存できます。プロジェクトと締切はあとから割り当てればOK。プロジェクトを設定すると自動で該当プロジェクトへ移動します。登録したタスクは自動でアーカイブされません。</div>
+      <form class="inboxQuick" id="inboxQuickForm">
+        <input type="text" id="inboxQuickInput" placeholder="思いついたTODOをここに入力してEnter…" autocomplete="off">
+        <button type="submit" class="btn pri">追加</button>
+      </form>
       <div class="card" id="inboxList"></div>
     </section>
 
@@ -954,7 +977,7 @@ function switchView(v){
   const el=$('#view-'+v); if(el)el.classList.add('active');
   if(v==='today')renderToday();
   if(v==='calendar')renderCalendar();
-  if(v==='inbox')renderInbox();
+  if(v==='inbox'){renderInbox();setTimeout(()=>{const i=$('#inboxQuickInput');if(i)i.focus();},0);}
   if(v==='settings')renderSettings();
 }
 function renderNav(){
@@ -1058,8 +1081,8 @@ function renderToday(){
   // 締切が近いもの：プロジェクトで絞り込み可能（複数選択可）・2ヶ月以内を全件・スクロール可能
   renderTodayFilters();
   const dl=$('#todayDeadlines');dl.innerHTML='';
-  const f=state.ui.todayFilter||'all';
-  const allowed=f==='all'?state.projects.map(p=>p.id):(Array.isArray(f)?f:[f]);
+  const f0=state.ui.todayFilter||'all';
+  const allowed=f0==='all'?state.projects.map(p=>p.id):(Array.isArray(f0)?f0:[f0]);
   const limit=iso(addDays(new Date(),60));
   const soon=activeTasks().filter(t=>{const ed=effectiveDeadline(t);return ed&&ed<=limit&&allowed.includes(t.projectId);})
     .sort((a,b)=>effectiveDeadline(a).localeCompare(effectiveDeadline(b)));
@@ -1077,21 +1100,22 @@ function renderToday(){
   });
 }
 function renderTodayFilters(){
+  // フィルタは「選択されたプロジェクトのみ表示」方式。'all'=何も選んでいない（＝全件表示）。
+  // プロジェクトチップを押すと選択に追加され、もう一度押すと選択から外れる（外れて0件になったら'all'に戻る）。
   const host=$('#todayFilters');if(!host)return;host.innerHTML='';
   const f=state.ui.todayFilter||'all';
+  const selected=Array.isArray(f)?f:[];
   const all=document.createElement('div');all.className='chip allc'+(f==='all'?' on':'');
   all.innerHTML='すべて';all.onclick=()=>{state.ui.todayFilter='all';save();renderToday();};
   host.appendChild(all);
   state.projects.forEach(p=>{
-    const sel=Array.isArray(f)?f:(f==='all'?state.projects.map(x=>x.id):[f]);
-    const on=f!=='all'&&sel.includes(p.id);
+    const on=selected.includes(p.id);
     const c=document.createElement('div');c.className='chip'+(on?' on':'');
     c.innerHTML=`<span class="dot" style="background:${p.color}"></span>${esc(p.name)}`;
     c.onclick=()=>{
-      let cur=Array.isArray(f)?f.slice():(f==='all'?state.projects.map(x=>x.id):[f]);
+      let cur=selected.slice();
       if(cur.includes(p.id))cur=cur.filter(x=>x!==p.id);else cur.push(p.id);
-      if(cur.length===0)cur=state.projects.map(x=>x.id);
-      state.ui.todayFilter=(cur.length===state.projects.length)?'all':cur;
+      state.ui.todayFilter=cur.length===0?'all':cur;
       save();renderToday();
     };
     host.appendChild(c);
@@ -1361,6 +1385,7 @@ function rowHeight(){
 }
 function renderCalendar(){
   renderCalFilters();renderLaneTools();
+  if(!READONLY)renderUnscheduled();
   let cols=granColumns();
   // 3ヶ月表示：トラックパッドの二本指スワイプでシームレスに月をまたげるよう、前後に1ヶ月ずつ
   // 見えないバッファ列を足しておく（印刷時は data-buf="1" の列をCSSで非表示にして3ヶ月だけ出す）。
@@ -1688,6 +1713,77 @@ function startDrag(el,card,ctx,mode,ev){
       }
     }
     renderCalendar();renderNav();
+  }
+  document.addEventListener('pointermove',onMove);
+  document.addEventListener('pointerup',onUp);
+}
+
+// カレンダー未登録タスク（プロジェクトはあるが開始/終了日が未設定）をトレイに表示し、
+// ドラッグしてカレンダーに落とすとその場で登録される（未登録タグ＝トレイからも自動的に消える）。
+function renderUnscheduled(){
+  const tray=$('#unschedTray'),list=$('#unschedList');
+  if(!tray||!list)return;
+  const allowed=activeFilterProjects();
+  const items=activeTasks().filter(t=>(!t.start||!t.end)&&allowed.includes(t.projectId));
+  tray.classList.toggle('show',items.length>0);
+  list.innerHTML='';
+  items.forEach(t=>{
+    const p=proj(t.projectId);
+    const el=document.createElement('div');
+    el.className='unschedCard';el.dataset.taskId=t.id;
+    el.style.background=projColor(t.projectId);
+    const ed=effectiveDeadline(t);
+    el.innerHTML=`${esc(t.name)}${ed?`<span class="dl">〆${fmtJ(ed)}${!t.deadline?'（自動）':''}</span>`:''}`;
+    el.title=(p?p.name+' / ':'')+t.name;
+    el.addEventListener('pointerdown',ev=>{ if(ev.button!==0)return; startPoolDrag(el,t,ev); });
+    list.appendChild(el);
+  });
+}
+function startPoolDrag(el,task,ev){
+  const startX=ev.clientX,startY=ev.clientY;
+  const rect=el.getBoundingClientRect();
+  const grabX=ev.clientX-rect.left,grabY=ev.clientY-rect.top;
+  let active=false,ghost=null,hit=null;
+  function begin(){
+    active=true;
+    el.classList.add('dragsource');
+    ghost=document.createElement('div');
+    ghost.className='dragghost';
+    ghost.style.background=projColor(task.projectId);
+    ghost.style.width=rect.width+'px';ghost.style.height=rect.height+'px';
+    ghost.innerHTML=`<div class="lbl">${esc(task.name)}</div>`;
+    document.body.appendChild(ghost);
+  }
+  function moveGhost(e){ if(ghost){ghost.style.left=(e.clientX-grabX)+'px';ghost.style.top=(e.clientY-grabY)+'px';} }
+  function hitTest(cx,cy){
+    const els=document.elementsFromPoint(cx,cy);
+    const lc=els.find(x=>x.classList&&x.classList.contains('lc'));
+    if(lc)return {date:lc.dataset.date,lane:lc.dataset.lane};
+    const row=els.find(x=>x.classList&&x.classList.contains('dayrow'));
+    if(row){ const firstLane=state.lanes[0]; return {date:row.dataset.date,lane:firstLane?firstLane.id:null}; }
+    return null;
+  }
+  function onMove(e){
+    if(!active){ if(Math.abs(e.clientX-startX)<4&&Math.abs(e.clientY-startY)<4)return; begin(); }
+    e.preventDefault();
+    moveGhost(e);
+    hit=hitTest(e.clientX,e.clientY);
+    $$('.lc.hot').forEach(x=>x.classList.remove('hot'));
+    if(hit)document.querySelectorAll(`.lc[data-date="${hit.date}"][data-lane="${hit.lane}"]`).forEach(c=>c.classList.add('hot'));
+  }
+  function onUp(){
+    document.removeEventListener('pointermove',onMove);
+    document.removeEventListener('pointerup',onUp);
+    if(ghost){ghost.remove();ghost=null;}
+    el.classList.remove('dragsource');
+    $$('.lc.hot').forEach(x=>x.classList.remove('hot'));
+    if(!active){ openTask(task.id); return; } // クリックのみ→詳細を開く
+    if(hit&&hit.date&&hit.lane){
+      task.start=hit.date;task.end=hit.date;task.laneId=hit.lane;
+      const ln=lane(hit.lane);if(ln)task.side=ln.kind==='client'?'client':'self';
+      save();toast('カレンダーに登録しました');
+      afterTaskChange();
+    }
   }
   document.addEventListener('pointermove',onMove);
   document.addEventListener('pointerup',onUp);
@@ -2458,6 +2554,14 @@ function wire(){
   $('#btnQuickAdd').onclick=()=>openTask(null);
   $('#btnReplan').onclick=()=>{generateSchedule();renderToday();if(current==='calendar')renderCalendar();toast('締切から逆算して仮組みしました');};
   $('#btnInboxAdd').onclick=()=>openTask(null);
+  $('#inboxQuickForm').addEventListener('submit',e=>{
+    e.preventDefault();
+    const inp=$('#inboxQuickInput');const name=inp.value.trim();
+    if(!name)return;
+    state.tasks.push({id:uid(),projectId:null,laneId:defaultLaneId('self'),name,start:'',end:'',deadline:'',
+      estMin:30,priority:'mid',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]});
+    save();inp.value='';afterTaskChange();inp.focus();
+  });
   $('#btnAddCard').onclick=()=>editCard(null);
   $('#btnShift').onclick=openShiftModal;
   $('#btnText').onclick=openTextModal;
