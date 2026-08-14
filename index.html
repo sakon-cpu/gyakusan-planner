@@ -1653,7 +1653,9 @@ function startDrag(el,card,ctx,mode,ev){
   }
   function begin(){
     active=true;
-    el.classList.add('dragsource'); // keep as faint placeholder
+    // 月をまたぐ予定は月ごとに別々のDOM要素（セグメント）として描画されているので、
+    // 同じタスクの全セグメントを薄く残す（掴んだ列のセグメントだけでなく）
+    document.querySelectorAll(`.calcard[data-card-id="${card.id}"]`).forEach(g=>g.classList.add('dragsource'));
     if(mode==='move'){
       ghost=document.createElement('div');
       ghost.className='dragghost'+(el.classList.contains('client')?' client':'');
@@ -1673,20 +1675,39 @@ function startDrag(el,card,ctx,mode,ev){
     if(row)return {date:row.dataset.date,lane:prop.lane};
     return null;
   }
-  let lastEv=null;
+  let lastEv=null, anchorDate=null;
   function onMove(e){
-    if(!active){ if(Math.abs(e.clientX-startX)<4&&Math.abs(e.clientY-startY)<4)return; begin(); }
+    if(!active){
+      if(Math.abs(e.clientX-startX)<4&&Math.abs(e.clientY-startY)<4)return;
+      begin();
+      // 掴んだ瞬間にポインタの真下にあった日付を基準日にする。月をまたぐ予定は月ごとに
+      // 別要素（クリップされたセグメント）として描画されており、要素自身の位置（左上角）は
+      // タスク本来の開始日を表さないことがある（例：11月に始まり12月へ続く予定を12月側の
+      // セグメントで掴むと、要素の左上＝12/1になってしまう）。そのため要素の座標は一切使わず、
+      // 「ポインタが実際に何日分動いたか」だけで開始日・終了日を一律にずらす方式にする。
+      // これなら期間（お尻＝終了日の位置関係含む）が常に正確に保たれる。
+      anchorDate=(hitTest(startX,startY)||{}).date||origStart;
+    }
     e.preventDefault();
     lastEv=e;
     moveGhost(e);
-    // aim the ghost's grab-point (not the raw cursor) at the grid for accurate snapping
-    const aimX = mode==='move' ? (e.clientX-grabX+12) : e.clientX;
-    const aimY = mode==='move' ? (e.clientY-grabY+10) : e.clientY;
-    const hit=hitTest(aimX,aimY)||hitTest(e.clientX,e.clientY);
-    if(hit){
-      if(mode==='move'){ prop.start=hit.date; prop.end=iso(addDays(parseISO(hit.date),origSpan)); if(lanes.some(l=>l.id===hit.lane))prop.lane=hit.lane; }
-      else if(mode==='top'){ if(hit.date<=prop.end)prop.start=hit.date; }
-      else if(mode==='bottom'){ if(hit.date>=prop.start)prop.end=hit.date; }
+    if(mode==='move'){
+      const hitD=hitTest(e.clientX,e.clientY);
+      if(hitD&&anchorDate){
+        const dayShift=daysBetween(anchorDate,hitD.date);
+        prop.start=iso(addDays(parseISO(origStart),dayShift));
+        prop.end=iso(addDays(parseISO(origEnd),dayShift));
+      }
+      // レーン（横方向）は掴んだ位置のオフセットを保ったまま判定する（縦方向のクリップとは無関係）
+      const aimX=e.clientX-grabX+12;
+      const laneHit=hitTest(aimX,e.clientY);
+      if(laneHit&&lanes.some(l=>l.id===laneHit.lane))prop.lane=laneHit.lane;
+    } else if(mode==='top'){
+      const hit=hitTest(e.clientX,e.clientY);
+      if(hit&&hit.date<=prop.end)prop.start=hit.date;
+    } else if(mode==='bottom'){
+      const hit=hitTest(e.clientX,e.clientY);
+      if(hit&&hit.date>=prop.start)prop.end=hit.date;
     }
     highlight();
   }
@@ -1694,7 +1715,7 @@ function startDrag(el,card,ctx,mode,ev){
     document.removeEventListener('pointermove',onMove);
     document.removeEventListener('pointerup',onUp);
     if(ghost){ghost.remove();ghost=null;}
-    el.classList.remove('dragsource');
+    document.querySelectorAll(`.calcard[data-card-id="${card.id}"]`).forEach(g=>g.classList.remove('dragsource'));
     if(!active){clearHot();selectCalCard(el,card.id,ev.shiftKey||ev.metaKey||ev.ctrlKey);return;} // simple click — select（Shift/⌘/Ctrlで複数選択に追加）
     clearHot();
     const changed=prop.start!==origStart||prop.end!==origEnd||prop.lane!==origLane;
@@ -1764,13 +1785,19 @@ function startGroupDrag(el,card,ctx,ev,group){
     if(row)return row.dataset.date;
     return null;
   }
+  let anchorDate=null;
   function onMove(e){
-    if(!active){ if(Math.abs(e.clientX-startX)<4&&Math.abs(e.clientY-startY)<4)return; begin(); }
+    if(!active){
+      if(Math.abs(e.clientX-startX)<4&&Math.abs(e.clientY-startY)<4)return;
+      begin();
+      // 単体ドラッグと同じ理由で、要素の座標ではなく「掴んだ瞬間にポインタ真下にあった日付」を
+      // 基準にする（月をまたぐ予定はセグメントごとにクリップされて描画されるため）。
+      anchorDate=hitDate(startX,startY)||anchorOrigStart;
+    }
     e.preventDefault();
     moveGhost(e);
-    const aimX=e.clientX-grabX+12,aimY=e.clientY-grabY+10;
-    const d=hitDate(aimX,aimY)||hitDate(e.clientX,e.clientY);
-    if(d)dayShift=daysBetween(anchorOrigStart,d);
+    const d=hitDate(e.clientX,e.clientY);
+    if(d&&anchorDate)dayShift=daysBetween(anchorDate,d);
     highlight();
   }
   function onUp(){
