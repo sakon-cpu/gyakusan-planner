@@ -192,6 +192,11 @@ input,select,textarea{font-family:inherit;font-size:14px}
 /* calendar canvas */
 .calwrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;overflow:auto}
 .months{display:flex;gap:16px;align-items:flex-start}
+/* 3ヶ月表示：前後1ヶ月ずつバッファ列を持たせ、トラックパッドの二本指スワイプでシームレスに横スクロール＋
+   スクロールスナップで「ある程度動いたら適正な表示位置に切り替わる」マグネット感を出す */
+.months.g-3month{overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
+.months.g-3month::-webkit-scrollbar{display:none}
+.months.g-3month .monthcol{scroll-snap-align:start;flex:0 0 calc((100% - 32px)/3)}
 .monthcol{flex:1 1 0;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
 .monthcol .mhead{background:#f0f2f7;padding:8px 10px;font-weight:800;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}
 .monthcol .mhead .mo{color:var(--sub);font-weight:600;font-size:11px}
@@ -306,8 +311,9 @@ input,select,textarea{font-family:inherit;font-size:14px}
   .view{padding:0;max-width:none}
   .view:not(.active){display:none}
   .calwrap{border:0;box-shadow:none;padding:0;overflow:visible}
-  .months{gap:8px}
+  .months{gap:8px;overflow:visible!important}
   .monthcol{break-inside:avoid}
+  .monthcol[data-buf="1"]{display:none!important} /* 3ヶ月表示のスクロール用バッファ月は印刷しない */
   .calcard{box-shadow:none}
   *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
   body{background:#fff}
@@ -748,8 +754,8 @@ function seed(){
 /* ---------------- helpers ---------------- */
 const proj=id=>state.projects.find(p=>p.id===id);
 const lane=id=>state.lanes.find(l=>l.id===id);
-// カレンダー選択中カード / クリップボード / ホバー中の日付・レーン（保存不要の一時UI状態）
-let SELECTED_CARD=null, CLIPBOARD_CARD=null, HOVER_DATE=null, HOVER_LANE=null;
+// カレンダー選択中カード（複数選択対応） / クリップボード / ホバー中の日付・レーン（保存不要の一時UI状態）
+let SELECTED_CARDS=new Set(), CLIPBOARD_CARDS=[], HOVER_DATE=null, HOVER_LANE=null;
 function laneWidths(){
   const lanes=state.lanes;const n=lanes.length||1;
   let total=0;
@@ -778,18 +784,30 @@ function fitCardText(el){
     el.style.minHeight=(contentH()+14)+'px';
   }
 }
-function selectCalCard(el,id){
-  $$('.calcard.selected').forEach(x=>x.classList.remove('selected'));
-  if(el)el.classList.add('selected');
-  SELECTED_CARD=id;
+// additive=true（Shift/⌘/Ctrlクリック）の場合はトグルで複数選択に追加、falseなら単独選択に切り替える
+function selectCalCard(el,id,additive){
+  if(!additive){SELECTED_CARDS.clear();SELECTED_CARDS.add(id);}
+  else{ if(SELECTED_CARDS.has(id))SELECTED_CARDS.delete(id); else SELECTED_CARDS.add(id); }
+  $$('.calcard').forEach(c=>c.classList.toggle('selected',SELECTED_CARDS.has(c.dataset.cardId)));
 }
-function duplicateCard(src){
-  if(!src)return;
-  const clone=JSON.parse(JSON.stringify(src));clone.id=uid();
-  if(HOVER_DATE){const span=daysBetween(src.start,src.end);clone.start=HOVER_DATE;clone.end=iso(addDays(parseISO(HOVER_DATE),span));}
-  if(HOVER_LANE&&lane(HOVER_LANE))clone.laneId=HOVER_LANE;
-  state.tasks.push(clone);save();renderCalendar();renderNav();toast('複製しました');
-  SELECTED_CARD=clone.id;
+// 複数カードをまとめて複製する。基準日（選択カードの中で一番早い開始日）とホバー中の日付の差分だけ、
+// 全カードを同じ日数だけずらして貼り付けることで、複数カードの相対的な位置関係を保ったまま複製できる。
+function duplicateCards(list){
+  if(!list||!list.length)return;
+  const anchor=list.reduce((min,c)=>c.start<min?c.start:min,list[0].start);
+  const dayShift=HOVER_DATE?daysBetween(anchor,HOVER_DATE):0;
+  const newIds=[];
+  list.forEach(src=>{
+    const clone=JSON.parse(JSON.stringify(src));clone.id=uid();
+    clone.start=iso(addDays(parseISO(src.start),dayShift));
+    clone.end=iso(addDays(parseISO(src.end),dayShift));
+    if(list.length===1&&HOVER_LANE&&lane(HOVER_LANE))clone.laneId=HOVER_LANE;
+    state.tasks.push(clone);newIds.push(clone.id);
+  });
+  save();renderCalendar();renderNav();
+  toast(list.length>1?`${list.length}件を複製しました`:'複製しました');
+  SELECTED_CARDS=new Set(newIds);
+  $$('.calcard').forEach(c=>c.classList.toggle('selected',SELECTED_CARDS.has(c.dataset.cardId)));
 }
 // tasks that appear on the calendar (have a start & end period and a project)
 const calTasks=()=>state.tasks.filter(t=>t.projectId&&t.start&&t.end);
@@ -1278,8 +1296,17 @@ function rowHeight(){
 }
 function renderCalendar(){
   renderCalFilters();renderLaneTools();
-  const cols=granColumns();
-  const label=state.ui.gran==='3month'?`${cols[0].title} 〜 ${cols[2].title}`:(cols[0].title);
+  let cols=granColumns();
+  // 3ヶ月表示：トラックパッドの二本指スワイプでシームレスに月をまたげるよう、前後に1ヶ月ずつ
+  // 見えないバッファ列を足しておく（印刷時は data-buf="1" の列をCSSで非表示にして3ヶ月だけ出す）。
+  let bufOffset=0;
+  if(state.ui.gran==='3month'&&!READONLY){
+    const a=parseISO(state.ui.anchor);
+    const beforeM=new Date(a.getFullYear(),a.getMonth()-1,1), afterM=new Date(a.getFullYear(),a.getMonth()+3,1);
+    cols=[monthCol(beforeM.getFullYear(),beforeM.getMonth()),...cols,monthCol(afterM.getFullYear(),afterM.getMonth())];
+    bufOffset=1;
+  }
+  const label=state.ui.gran==='3month'?`${cols[bufOffset].title} 〜 ${cols[bufOffset+2].title}`:(cols[0].title);
   $('#calRange').textContent=label;
   const host=$('#calMonths');host.className='months g-'+state.ui.gran;host.innerHTML='';
   $$('#granSwitch button').forEach(b=>b.classList.toggle('on',b.dataset.g===state.ui.gran));
@@ -1294,8 +1321,9 @@ function renderCalendar(){
   });
   const laneW=laneWidths(); // %表記（合計100）。ユーザーがドラッグで調整可能
   const laneCum=[];{let acc=0;laneW.forEach(w=>{laneCum.push(acc);acc+=w;});}
-  cols.forEach(col=>{
+  cols.forEach((col,colIdx)=>{
     const mc=document.createElement('div');mc.className='monthcol';
+    if(bufOffset&&(colIdx===0||colIdx===cols.length-1))mc.dataset.buf='1';
     // レーン見出し(.lh)の%幅は、行側の.lanecellsと同じく「日付欄(gut)を除いた残り幅」を基準に計算する必要がある。
     // .lanehdr自体（gut込みの全幅）を基準にしてしまうと、gutの分だけ見出しが実際のマス目より広くなり、境界線がずれる原因になっていた。
     let laneHdr=`<div class="lanehdr"><div class="gut"></div><div class="lanehdrcells">`+lanes.map((l,li)=>`<div class="lh ${l.kind==='client'?'client':''}" style="flex:0 0 ${laneW[li]}%">${esc(l.name)}${l.kind==='client'?' <span style="font-size:9px;opacity:.7">〔破線枠〕</span>':''}</div>`).join('')+`</div></div>`;
@@ -1320,6 +1348,11 @@ function renderCalendar(){
       mc.querySelectorAll('.lc').forEach(lc=>{
         lc.addEventListener('dblclick',e=>{e.stopPropagation();openTask(null,null,{withDates:true,presetDate:lc.dataset.date,presetLane:lc.dataset.lane});});
         lc.addEventListener('mouseover',()=>{HOVER_DATE=lc.dataset.date;HOVER_LANE=lc.dataset.lane;});
+      });
+      // 日付の数字部分（左端のgut）をダブルクリックしても同様に開けるようにする（最初のレーンをデフォルトに）
+      mc.querySelectorAll('.dayrow').forEach(row=>{
+        const gut=row.querySelector('.gut');if(!gut)return;
+        gut.addEventListener('dblclick',e=>{e.stopPropagation();openTask(null,null,{withDates:true,presetDate:row.dataset.date,presetLane:lanes[0]&&lanes[0].id});});
       });
     }
     // place cards, packing overlapping cards within a lane into sub-columns
@@ -1350,7 +1383,7 @@ function renderCalendar(){
         const e=Math.min(col.days.length-1,daysBetween(start,card.end));
         const top=s*H, height=(e-s+1)*H-3;
         const done=card.status==='done';
-        const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self')+(done?' donecard':'')+(card.id===SELECTED_CARD?' selected':'');
+        const el=document.createElement('div');el.className='calcard '+(ln.kind==='client'?'client':'self')+(done?' donecard':'')+(SELECTED_CARDS.has(card.id)?' selected':'');
         el.style.top=(top+1)+'px';
         el.style.height=Math.max(20,height)+'px';
         el.style.left=`calc(48px + (100% - 48px) * ${(laneCum[li]+cardSub/K*laneW[li])/100} + 2px)`;
@@ -1382,6 +1415,31 @@ function renderCalendar(){
       });
     });
   }
+  if(bufOffset)initSeamlessMonthScroll(host);
+}
+// 3ヶ月表示：前後1ヶ月ずつのバッファ列を足した状態で、常に「バッファ1ヶ月＋本来の3ヶ月」の
+// 真ん中（=本来の3ヶ月）が見えるようスクロール位置を初期化し、二本指スワイプが1ヶ月分snapで
+// 動いたらstate.ui.anchorを更新して静かに再センタリングする（＝実質、無限にシームレススクロールできる）。
+function initSeamlessMonthScroll(host){
+  const cols=[...host.querySelectorAll('.monthcol')];
+  if(cols.length<2)return;
+  const step=cols[1].getBoundingClientRect().left-cols[0].getBoundingClientRect().left;
+  if(!step||step<=0)return;
+  host.scrollLeft=step; // バッファ1列ぶん右にずらし、本来の3ヶ月がちょうど画面いっぱいに来るようにする
+  let t=null;
+  host.onscroll=()=>{
+    clearTimeout(t);
+    t=setTimeout(()=>{
+      const idx=Math.round(host.scrollLeft/step);
+      const dir=idx-1; // -1=1ヶ月前へ、0=そのまま、+1=1ヶ月先へ
+      if(dir!==0){
+        const a=parseISO(state.ui.anchor);a.setMonth(a.getMonth()+dir);
+        state.ui.anchor=iso(new Date(a.getFullYear(),a.getMonth(),1));
+        save();renderCalendar();
+        if(gTokenValid())gFetchForCurrentView();
+      }
+    },160);
+  };
 }
 function attachLaneResizer(rz,idx){
   rz.addEventListener('pointerdown',ev=>{
@@ -1542,7 +1600,7 @@ function startDrag(el,card,ctx,mode,ev){
     document.removeEventListener('pointerup',onUp);
     if(ghost){ghost.remove();ghost=null;}
     el.classList.remove('dragsource');
-    if(!active){clearHot();selectCalCard(el,card.id);return;} // simple click — select (also lets dblclick handle editing)
+    if(!active){clearHot();selectCalCard(el,card.id,ev.shiftKey||ev.metaKey||ev.ctrlKey);return;} // simple click — select（Shift/⌘/Ctrlで複数選択に追加）
     clearHot();
     const changed=prop.start!==origStart||prop.end!==origEnd||prop.lane!==origLane;
     if(changed){
@@ -1883,8 +1941,13 @@ function setPrintHeader(title){
 function measureNatH(availW){
   const el=$('#printScale');const pw=el.style.width,pt=el.style.transform,ph=el.querySelector('.printhead').style.display;
   el.querySelector('.printhead').style.display='flex';
-  el.style.transform='';el.style.width=availW+'px';void el.offsetHeight;
+  el.style.transform='';el.style.width=availW+'px';
+  // 3ヶ月表示のスクロール用バッファ月（前後1ヶ月ずつ）は測定・印刷の対象外にする
+  const bufCols=[...el.querySelectorAll('.monthcol[data-buf="1"]')];
+  bufCols.forEach(c=>c.style.display='none');
+  void el.offsetHeight;
   const h=el.getBoundingClientRect().height;
+  bufCols.forEach(c=>c.style.display='');
   el.style.width=pw;el.style.transform=pt;el.querySelector('.printhead').style.display=ph;
   return h;
 }
@@ -1926,6 +1989,8 @@ function renderPrintPreview(paper,fit,title){
   const {availW,availH,natH,s}=computeFit(paper,fit);
   const clone=$('#printScale').cloneNode(true);
   clone.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));
+  clone.querySelectorAll('.monthcol[data-buf="1"]').forEach(e=>e.remove()); // 3ヶ月表示のスクロール用バッファ月はプレビュー/印刷に出さない
+  const clonedMonths=clone.querySelector('.months');if(clonedMonths)clonedMonths.style.overflow='visible';
   const tx=Math.max(0,(availW-availW*s)/2), ty=Math.max(0,(availH-natH*s)/2);
   clone.style.width=availW+'px';clone.style.transformOrigin='top left';
   clone.style.transform=`translate(${tx}px,${ty}px) scale(${s})`;
@@ -2363,11 +2428,11 @@ function wire(){
       const k=e.key.toLowerCase();
       if(k==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();}
       else if(k==='y'){e.preventDefault();redo();}
-      else if(k==='c'&&SELECTED_CARD&&!READONLY){
-        const src=state.tasks.find(x=>x.id===SELECTED_CARD);
-        if(src){e.preventDefault();CLIPBOARD_CARD=JSON.parse(JSON.stringify(src));toast('カードをコピーしました（⌘V で複製）');}
-      } else if(k==='v'&&CLIPBOARD_CARD&&!READONLY){
-        e.preventDefault();duplicateCard(CLIPBOARD_CARD);
+      else if(k==='c'&&SELECTED_CARDS.size&&!READONLY){
+        const list=[...SELECTED_CARDS].map(id=>state.tasks.find(x=>x.id===id)).filter(Boolean);
+        if(list.length){e.preventDefault();CLIPBOARD_CARDS=JSON.parse(JSON.stringify(list));toast(list.length>1?`${list.length}件コピーしました（⌘Vで複製）`:'カードをコピーしました（⌘V で複製）');}
+      } else if(k==='v'&&CLIPBOARD_CARDS.length&&!READONLY){
+        e.preventDefault();duplicateCards(CLIPBOARD_CARDS);
       }
     }
   });
