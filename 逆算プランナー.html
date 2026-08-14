@@ -2788,27 +2788,34 @@ function pageRangeLabel(rows){
   const a=flat[0],b=flat[flat.length-1];
   return a.y===b.y&&a.m===b.m?ymLabel(a.y,a.m):`${ymLabel(a.y,a.m)} 〜 ${ymLabel(b.y,b.m)}`;
 }
+// ★重要：paintMonthCols内のfitCardText()はel.clientHeight等の「実際にレイアウトされた寸法」を
+// 読んで文字サイズ・カード高さを調整するため、要素がまだdocumentに接続されていない状態で
+// カードを組み立てると、あらゆる寸法が0として扱われてしまい、複数日カードの高さが
+// 「auto」＋最小高さに強制的に潰れてしまう（＝「作業期間が1日表示になる」不具合の直接の原因）。
+// そのため、必ず先にdocument.bodyへ接続してからカードを組み立てる（画面外へ配置して見た目には影響しない）。
 function buildPrintPageEl(rowsOfMonths,ctx,opts){
   const wrap=document.createElement('div');
   wrap.className='printPage';
   wrap.style.cssText='position:fixed;left:-99999px;top:0;background:#fff;padding:8px;box-sizing:border-box';
   wrap.style.width=Math.round(opts.availWpx)+'px';
   wrap.classList.toggle('hidedurwm',opts.showDur===false);
+  document.body.appendChild(wrap); // ← カードを組み立てる前に必ず接続する
   wrap.appendChild(buildPrintHeadEl(opts.title,pageRangeLabel(rowsOfMonths)));
   rowsOfMonths.forEach(rowYMs=>{
     const rowHost=document.createElement('div');rowHost.className='months';
+    wrap.appendChild(rowHost); // ← paintMonthColsを呼ぶ前に接続する（rowHost自体も接続済みでないとfitCardTextの測定が壊れる）
     const cols=rowYMs.map(ym=>monthCol(ym.y,ym.m));
     paintMonthCols(rowHost,cols,{bufOffset:0,allowed:ctx.allowed,lanes:ctx.lanes,laneW:ctx.laneW,laneCum:ctx.laneCum,H:opts.H,dlByDate:ctx.dlByDate,showSummary:opts.showSummary,interactive:false});
-    wrap.appendChild(rowHost);
   });
   return wrap;
 }
 function measureNaturalHeight(el){
-  el.style.visibility='hidden';
-  document.body.appendChild(el);
+  // buildPrintPageElで既にdocumentへ接続済みの前提（未接続なら念のため接続する）
+  const wasConnected=el.isConnected;
+  if(!wasConnected){el.style.visibility='hidden';document.body.appendChild(el);}
   void el.offsetHeight;
   const h=el.getBoundingClientRect().height;
-  el.remove();el.style.visibility='';
+  el.remove();if(!wasConnected)el.style.visibility='';
   return h;
 }
 // 1ページの月組み(rowsOfMonths)に対して、そのページの縦横比が用紙にできるだけ近くなる
@@ -2822,11 +2829,11 @@ function tuneRowHeight(rowsOfMonths,ctx,opts,baseH,availWpx,availHpx){
   const ideal=baseH*((availHpx*0.96)/measured);
   return Math.max(8,Math.min(40,Math.round(ideal)));
 }
-async function rasterizePage(el){
-  document.body.appendChild(el);
+async function rasterizePage(el,scale){
+  if(!el.isConnected)document.body.appendChild(el); // buildPrintPageElで通常は既に接続済み
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); // レイアウト・フォント確定を待つ
   let canvas;
-  try{ canvas=await html2canvas(el,{scale:2,backgroundColor:'#ffffff',useCORS:true,logging:false}); }
+  try{ canvas=await html2canvas(el,{scale:scale||2,backgroundColor:'#ffffff',useCORS:true,logging:false}); }
   finally{ el.remove(); }
   return canvas;
 }
@@ -2886,6 +2893,17 @@ function openPrintModal(){
       </div>
       <div class="field"><label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="prDur" style="margin-right:6px">作業日数の透かし（7日以上の予定）をPDFに含める</label></div>
       <div class="field"><label>ページ構成</label><div class="pp-breakdown" id="prBreak"></div></div>
+      <div class="field"><label>プレビュー（実際にPDFへ出力される内容と同じです）</label>
+        <div class="previewwrap" style="flex-direction:column;gap:8px">
+          <img id="prPreviewImg" style="max-width:100%;max-height:48vh;box-shadow:0 6px 20px rgba(10,15,30,.22);background:#fff;display:none">
+          <div id="prPreviewStatus" style="font-size:12px;color:var(--sub)">プレビューを生成中…</div>
+        </div>
+        <div class="pp-row" style="margin-top:8px;justify-content:center">
+          <button class="presetbtn" id="prPrev">◀ 前のページ</button>
+          <span id="prPageIndicator" style="font-size:12px;font-weight:700;color:var(--ink)"></span>
+          <button class="presetbtn" id="prNext">次のページ ▶</button>
+        </div>
+      </div>
     </div>
     <div class="mf"><span style="font-size:12px;color:var(--sub)" id="prMsg">用紙の向きは指定どおりに確定してPDF化されます</span>
       <div style="display:flex;gap:8px"><button class="btn" id="prCancel">キャンセル</button><button class="btn pri" id="prGo">PDFを生成して保存</button></div></div>`,'wide');
@@ -2913,7 +2931,61 @@ function openPrintModal(){
   $('#prTitle').oninput=e=>{title=e.target.value;update();};
   $('#prDur').checked=showDur;
   $('#prDur').onchange=e=>{showDur=e.target.checked;state.ui.printShowDuration=showDur;save();};
-  $('#mClose').onclick=$('#prCancel').onclick=closeModal;
+  // ---- プレビュー：実際のPDF生成と全く同じ関数（buildPrintPageEl / rasterizePage）を使って
+  // 各ページをラスタライズし、画像として確認できるようにする（＝プレビューと実際の出力に差が出ない）。
+  // 生成は多少重いので、操作のたびに毎回全ページぶん作り直すのではなく300ms待ってから1回だけ実行し、
+  // 実行中に新しい変更が入ったら（トークンで判定して）古い結果は捨てる。
+  let previewToken=0,previewPages=null,previewIdx=0,previewDebounce=null;
+  // モーダルが閉じられた後にデバウンス/非同期処理が遅れて発火し、既に取り除かれたDOMを
+  // 触ってエラーになるのを防ぐためのガード（PDF生成成功時のcloseModal、キャンセル、✕ボタンの全てで踏む）。
+  let prModalClosed=false;
+  $('#mClose').onclick=$('#prCancel').onclick=()=>{prModalClosed=true;clearTimeout(previewDebounce);previewToken++;closeModal();};
+  function showPreviewPage(){
+    if(prModalClosed)return;
+    const img=$('#prPreviewImg'),status=$('#prPreviewStatus'),ind=$('#prPageIndicator');
+    if(!img||!status||!ind)return;
+    if(!previewPages||!previewPages.length){
+      img.style.display='none';ind.textContent='';
+      $('#prPrev').disabled=$('#prNext').disabled=true;
+      return;
+    }
+    previewIdx=Math.max(0,Math.min(previewIdx,previewPages.length-1));
+    img.src=previewPages[previewIdx];img.style.display='block';status.textContent='';
+    ind.textContent=`${previewIdx+1} / ${previewPages.length} ページ`;
+    $('#prPrev').disabled=previewIdx<=0;$('#prNext').disabled=previewIdx>=previewPages.length-1;
+  }
+  $('#prPrev').onclick=()=>{previewIdx--;showPreviewPage();};
+  $('#prNext').onclick=()=>{previewIdx++;showPreviewPage();};
+  async function refreshPreview(){
+    if(prModalClosed)return;
+    const myToken=++previewToken;
+    const months=monthRangeList(sy,sm,ey,em);
+    if(!months.length||months.length>36){previewPages=null;showPreviewPage();if(!prModalClosed&&$('#prPreviewStatus'))$('#prPreviewStatus').textContent='';return;}
+    if($('#prPreviewStatus'))$('#prPreviewStatus').textContent='プレビューを生成中…';
+    try{
+      const pages=paginateMonths(months,monthsPerRow,rowsPerPage);
+      const ctx=buildCalRenderCtx();
+      const {availW,availH}=paperPx(paper);
+      const baseH=rowHeightForLayout(monthsPerRow,rowsPerPage);
+      const showSummary=(monthsPerRow<=3&&rowsPerPage===1);
+      const urls=[];
+      for(let i=0;i<pages.length;i++){
+        if(myToken!==previewToken||prModalClosed)return; // 途中で設定が変わった／モーダルが閉じた＝この結果は使わない
+        const tunedH=tuneRowHeight(pages[i],ctx,{title,showDur,showSummary},baseH,availW,availH);
+        const el=buildPrintPageEl(pages[i],ctx,{title,showDur,availWpx:availW,H:tunedH,showSummary});
+        const canvas=await rasterizePage(el,1); // プレビューは軽量化のため等倍
+        urls.push(canvas.toDataURL('image/jpeg',0.85));
+      }
+      if(myToken!==previewToken||prModalClosed)return;
+      previewPages=urls;previewIdx=Math.min(previewIdx,urls.length-1);
+      showPreviewPage();
+    }catch(err){
+      if(myToken!==previewToken||prModalClosed)return;
+      console.error(err);
+      if($('#prPreviewStatus'))$('#prPreviewStatus').textContent='プレビューの生成に失敗しました（PDF生成自体は試せます）';
+    }
+  }
+  function schedulePreview(){clearTimeout(previewDebounce);previewDebounce=setTimeout(refreshPreview,300);}
   let busy=false;
   $('#prGo').onclick=async()=>{
     if(busy)return;
@@ -2924,6 +2996,7 @@ function openPrintModal(){
     try{
       const pages=paginateMonths(months,monthsPerRow,rowsPerPage);
       await exportRangePDF(pages,{paper,title,showDur,monthsPerRow,rowsPerPage});
+      prModalClosed=true;clearTimeout(previewDebounce);previewToken++;
       closeModal();
       toast('PDFを保存しました');
     }catch(err){
@@ -2943,6 +3016,7 @@ function openPrintModal(){
       ? pages.map((rows,i)=>`<div>${i+1}ページ目：${esc(pageRangeLabel(rows))}（${rows.flat().length}ヶ月）</div>`).join('')
       : '<div>開始月・終了月を指定してください</div>';
     $('#prMsg').textContent = pages.length ? `全${months.length}ヶ月 ・ 全${pages.length}ページ（1ページ最大${per}ヶ月）・ 用紙 ${PAPERS[paper].label}` : '';
+    schedulePreview();
   }
   drawPaperBtns();
   update();
