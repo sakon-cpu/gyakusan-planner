@@ -288,6 +288,17 @@ input,select,textarea{font-family:inherit;font-size:14px}
 
 .emptycal{padding:40px;text-align:center;color:var(--sub)}
 
+/* 1週間以上の予定に表示する「作業日数」の透かし */
+.calcard .durwm{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-16deg);
+  font-size:22px;font-weight:800;color:rgba(255,255,255,.32);letter-spacing:.5px;white-space:nowrap;
+  pointer-events:none;z-index:0;text-shadow:0 1px 2px rgba(0,0,0,.12)}
+.calcard.client .durwm{color:rgba(229,72,77,.28)}
+.months.g-1month .calcard .durwm{font-size:17px}
+#printScale.hidedurwm .durwm{display:none}
+/* リサイズ中に表示する「今離したら何日間になるか」のライブ表示 */
+.dragdurtip{position:fixed;z-index:9999;pointer-events:none;background:#111827;color:#fff;font-weight:800;
+  font-size:12.5px;padding:5px 10px;border-radius:7px;box-shadow:0 8px 22px rgba(10,15,30,.35);white-space:nowrap}
+
 /* 未登録タスク トレイ */
 .unschedTray{display:none;align-items:center;gap:10px;padding:8px 4px;margin-bottom:6px}
 .unschedTray.show{display:flex}
@@ -621,6 +632,7 @@ const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const parseISO=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
 const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
 const daysBetween=(a,b)=>Math.round((parseISO(b)-parseISO(a))/86400000);
+const cardDurationDays=(s,e)=>daysBetween(s,e)+1; // 開始日を含めた実日数
 const WK=['日','月','火','水','木','金','土'];
 const todayISO=()=>iso(new Date());
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -726,6 +738,7 @@ function migrate(){
   if(!state.blocks)state.blocks=[];
   if(state.settings&&state.settings.dailyCap==null)state.settings.dailyCap=180;
   if(state.ui&&state.ui.todayFilter==null)state.ui.todayFilter='all';
+  if(state.ui&&state.ui.printShowDuration==null)state.ui.printShowDuration=true;
   (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||/client/i.test(l.name)))?'client':'self';});
   (state.projects||[]).forEach(p=>{if(p.client==null)p.client='';});
   const firstSelf=()=>{const l=(state.lanes||[]).find(x=>x.kind==='self')||state.lanes[0];return l?l.id:null;};
@@ -779,7 +792,7 @@ function seed(){
       {id:uid(),projectId:p3,laneId:lSelf,name:'経費処理',start:T,end:T,deadline:T,estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
       {id:uid(),projectId:null,laneId:lSelf,name:'名刺デザインの見積を取る',start:'',end:'',deadline:'',estMin:30,priority:'lo',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]},
     ],
-    ui:{gran:'3month',anchor:iso(new Date(t.getFullYear(),t.getMonth(),1)),filter:'all',calDay:T,todayFilter:'all'}
+    ui:{gran:'3month',anchor:iso(new Date(t.getFullYear(),t.getMonth(),1)),filter:'all',calDay:T,todayFilter:'all',printShowDuration:true}
   };
 }
 
@@ -1479,7 +1492,8 @@ function renderCalendar(){
         el.style.left=`calc(48px + (100% - 48px) * ${(laneCum[li]+cardSub/K*laneW[li])/100} + 2px)`;
         el.style.width=`calc((100% - 48px) * ${(laneW[li]/K)/100} - 4px)`;
         el.style.background=projColor(card.projectId);
-        el.innerHTML=`<div class="rz t"><i></i></div><div class="lbl">${done?'✓ ':''}${esc(card.name)}</div>
+        const durDays=cardDurationDays(card.start,card.end);
+        el.innerHTML=`<div class="rz t"><i></i></div>${durDays>=7?`<div class="durwm">${durDays}日間</div>`:''}<div class="lbl">${done?'✓ ':''}${esc(card.name)}</div>
           ${showSummary&&card.summary?`<div class="sm">${esc(card.summary)}</div>`:''}
           <div class="rz b"><i></i></div>`;
         el.dataset.cardId=card.id;el.dataset.sub=cardSub;
@@ -1643,7 +1657,7 @@ function startDrag(el,card,ctx,mode,ev){
   const rect=el.getBoundingClientRect();
   const grabX=ev.clientX-rect.left, grabY=ev.clientY-rect.top; // where within the card we grabbed
   const gw=rect.width, gh=rect.height;
-  let active=false, ghost=null;
+  let active=false, ghost=null, durTip=null;
   const prop={start:origStart,end:origEnd,lane:origLane}; // proposed target (committed on drop)
   const clearHot=()=>{$$('.lc.hot').forEach(x=>x.classList.remove('hot'));};
   function highlight(){
@@ -1664,9 +1678,19 @@ function startDrag(el,card,ctx,mode,ev){
       ghost.innerHTML=el.querySelector('.lbl')?`<div class="lbl">${el.querySelector('.lbl').innerHTML}</div>`:'';
       const sm=el.querySelector('.sm');if(sm)ghost.innerHTML+=`<div class="sm">${sm.innerHTML}</div>`;
       document.body.appendChild(ghost);
+    } else {
+      // 上下端のリサイズ中は、いま手を離したら何日間になるかをリアルタイムのツールチップで表示する
+      // （作業日数を把握しながら伸び縮みさせたい、という要望に対応）
+      durTip=document.createElement('div');durTip.className='dragdurtip';
+      document.body.appendChild(durTip);
     }
   }
   function moveGhost(e){ if(ghost){ghost.style.left=(e.clientX-grabX)+'px';ghost.style.top=(e.clientY-grabY)+'px';} }
+  function updateDurTip(e){
+    if(!durTip)return;
+    durTip.textContent=`${cardDurationDays(prop.start,prop.end)}日間`;
+    durTip.style.left=(e.clientX+16)+'px';durTip.style.top=(e.clientY-14)+'px';
+  }
   function hitTest(cx,cy){
     const els=document.elementsFromPoint(cx,cy);
     const lc=els.find(x=>x.classList&&x.classList.contains('lc'));
@@ -1705,9 +1729,11 @@ function startDrag(el,card,ctx,mode,ev){
     } else if(mode==='top'){
       const hit=hitTest(e.clientX,e.clientY);
       if(hit&&hit.date<=prop.end)prop.start=hit.date;
+      updateDurTip(e);
     } else if(mode==='bottom'){
       const hit=hitTest(e.clientX,e.clientY);
       if(hit&&hit.date>=prop.start)prop.end=hit.date;
+      updateDurTip(e);
     }
     highlight();
   }
@@ -1715,6 +1741,7 @@ function startDrag(el,card,ctx,mode,ev){
     document.removeEventListener('pointermove',onMove);
     document.removeEventListener('pointerup',onUp);
     if(ghost){ghost.remove();ghost=null;}
+    if(durTip){durTip.remove();durTip=null;}
     document.querySelectorAll(`.calcard[data-card-id="${card.id}"]`).forEach(g=>g.classList.remove('dragsource'));
     if(!active){clearHot();selectCalCard(el,card.id,ev.shiftKey||ev.metaKey||ev.ctrlKey);return;} // simple click — select（Shift/⌘/Ctrlで複数選択に追加）
     clearHot();
@@ -2229,27 +2256,32 @@ function openPrintModal(){
       <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">用紙：</span><div class="paperbtns" id="prPaper"></div></div>
       <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">フィット：</span>
         <div class="seg" id="prFit"><button data-v="1" class="on">1ページに収める</button><button data-v="0">原寸（複数ページ可）</button></div></div>
+      <div class="field"><label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="prDur" style="margin-right:6px">作業日数の透かし（7日以上の予定）を印刷に含める</label></div>
       <div class="previewwrap"><div class="previewframe" id="previewFrame"><div id="previewPage"></div></div></div>
       <div class="previewhint" id="prHint"></div>
     </div>
     <div class="mf"><span style="font-size:12px;color:var(--sub)">プレビューは実際の印刷結果と同じ縮尺です</span>
       <div style="display:flex;gap:8px"><button class="btn" id="prCancel">キャンセル</button><button class="btn pri" id="prGo">印刷 / PDF</button></div></div>`,'wide');
   const rec=RECPAPER[state.ui.gran];
+  let showDur=state.ui.printShowDuration!==false;
+  $('#prDur').checked=showDur;
   const drawPaperBtns=()=>{const h=$('#prPaper');h.innerHTML='';['a4l','a4p','a3l','a3p'].forEach(pk=>{const btn=document.createElement('button');btn.className='paperbtn'+(pk===paper?' on':'');btn.innerHTML=`${PAPERS[pk].label}${pk===rec?'<span class="rec">推奨</span>':''}`;btn.onclick=()=>{paper=pk;drawPaperBtns();update();};h.appendChild(btn);});};
   drawPaperBtns();
   segBind('#prFit',v=>{fit=(v==='1');update();});
   $('#prTitle').oninput=e=>{title=e.target.value;update();};
+  $('#prDur').onchange=e=>{showDur=e.target.checked;state.ui.printShowDuration=showDur;save();update();};
   $('#mClose').onclick=$('#prCancel').onclick=closeModal;
-  $('#prGo').onclick=()=>{closeModal();setTimeout(()=>doPrint(paper,fit,title),120);};
-  function update(){renderPrintPreview(paper,fit,title);}
+  $('#prGo').onclick=()=>{closeModal();setTimeout(()=>doPrint(paper,fit,title,showDur),120);};
+  function update(){renderPrintPreview(paper,fit,title,showDur);}
   update();
 }
-function renderPrintPreview(paper,fit,title){
+function renderPrintPreview(paper,fit,title,showDur){
   setPrintHeader(title);
   const {availW,availH,natH,s}=computeFit(paper,fit);
   const clone=$('#printScale').cloneNode(true);
   clone.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));
   clone.querySelectorAll('.monthcol[data-buf="1"]').forEach(e=>e.remove()); // 3ヶ月表示のスクロール用バッファ月はプレビュー/印刷に出さない
+  clone.classList.toggle('hidedurwm',showDur===false); // 作業日数の透かしを印刷/プレビューから除外するか
   const clonedMonths=clone.querySelector('.months');if(clonedMonths)clonedMonths.style.overflow='visible';
   const tx=Math.max(0,(availW-availW*s)/2), ty=Math.max(0,(availH-natH*s)/2);
   clone.style.width=availW+'px';clone.style.transformOrigin='top left';
@@ -2380,13 +2412,14 @@ function openShiftModal(){
     toast(`全体を ${Math.abs(n)}日 ${n>0?'後ろ':'前'} にずらしました（Cmd+Zで取り消し可）`);
   };
 }
-function doPrint(paper,fit,title){
+function doPrint(paper,fit,title,showDur){
   setPrintHeader(title);
   const p=PAPERS[paper];const margin=PMARGIN;
   let st=$('#printPageStyle');if(!st){st=document.createElement('style');st.id='printPageStyle';document.head.appendChild(st);}
   st.textContent=`@page{size:${p.w}mm ${p.h}mm;margin:${margin}mm}`;
   const scaleEl=$('#printScale'),wrap=$('#calWrap'),head=scaleEl.querySelector('.printhead');
   scaleEl.style.transform='';scaleEl.style.transformOrigin='top left';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';head.style.display='';
+  scaleEl.classList.toggle('hidedurwm',showDur===false); // 作業日数の透かしを印刷に含めるかどうか
   // computeFit uses measureNatH which counts the (print-visible) header, so screen==print height
   const {availW,availH,natH,s}=computeFit(paper,fit);
   if(fit){
@@ -2397,7 +2430,7 @@ function doPrint(paper,fit,title){
     scaleEl.style.transform=`translate(${tx}px,${ty}px) scale(${s})`;
     wrap.style.height=Math.floor(availH)+'px';wrap.style.overflow='hidden'; // full printable height → one page, content centered
   }
-  const done=()=>{scaleEl.style.transform='';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';head.style.display='';window.removeEventListener('afterprint',done);};
+  const done=()=>{scaleEl.style.transform='';scaleEl.style.width='';wrap.style.height='';wrap.style.overflow='';head.style.display='';scaleEl.classList.remove('hidedurwm');window.removeEventListener('afterprint',done);};
   window.addEventListener('afterprint',done);
   window.print();
 }
