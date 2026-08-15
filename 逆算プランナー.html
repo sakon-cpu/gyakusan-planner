@@ -523,8 +523,10 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dlrow .pinbtn{flex:0 0 auto;cursor:pointer;font-size:13px;opacity:.3;line-height:1}
 .dlrow .pinbtn:hover{opacity:.7}
 .dlrow .pinbtn.on{opacity:1}
+.dlrow.pinned{opacity:.45}
 #todoPinned{background:#fffdf3;border:1px solid #f3e6b8}
 #todoPinned .emptyhint{padding:14px 16px;font-size:12.5px}
+#todoPinned .dlrow.pinned{opacity:1}
 .kindtag{flex:0 0 auto;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:10px;white-space:nowrap}
 .kindtag.quick{background:#e0f2fe;color:#0369a1}
 .kindtag.work{background:#fef3c7;color:#92400e}
@@ -1553,7 +1555,7 @@ function renderToday(){
     const days=ed?daysBetween(todayISO(),ed):null;
     const cls=days==null?'':(days<=1?'soon':days<=4?'mid':'ok');
     const label=days==null?'〆切未設定':(days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`);
-    const row=document.createElement('div');row.className='dlrow'+(isDone?' done':'');
+    const row=document.createElement('div');row.className='dlrow'+(isDone?' done':'')+(t.pinned?' pinned':'');
     row.innerHTML=`<span class="pinbtn ${t.pinned?'on':''}" title="優先プールへピン留め">📌</span>
       <input type="checkbox" class="dlchk" ${isDone?'checked':''}>
       <span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
