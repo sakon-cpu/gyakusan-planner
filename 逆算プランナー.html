@@ -520,6 +520,11 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dlrow .dlchk{flex:0 0 auto;width:16px;height:16px;cursor:pointer;accent-color:var(--pri,#2563eb)}
 .dlrow.done{opacity:.62}
 .dlrow.done .nm{text-decoration:line-through}
+.dlrow .pinbtn{flex:0 0 auto;cursor:pointer;font-size:13px;opacity:.3;line-height:1}
+.dlrow .pinbtn:hover{opacity:.7}
+.dlrow .pinbtn.on{opacity:1}
+#todoPinned{background:#fffdf3;border:1px solid #f3e6b8}
+#todoPinned .emptyhint{padding:14px 16px;font-size:12.5px}
 .kindtag{flex:0 0 auto;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:10px;white-space:nowrap}
 .kindtag.quick{background:#e0f2fe;color:#0369a1}
 .kindtag.work{background:#fef3c7;color:#92400e}
@@ -905,6 +910,8 @@ body.shared #main{padding-top:34px}
         <div><h1>TODO</h1><div class="date" id="todayDate"></div></div>
         <div class="tools"><button class="btn pri" id="btnQuickAdd">＋ タスク追加</button></div>
       </div>
+      <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">📌 優先プール（ピン留めしたTODO）</div>
+      <div class="card scrollbox" id="todoPinned" style="max-height:220px;margin-bottom:18px"></div>
       <div class="sechead">〆切が近い順・全プロジェクト横断（いつまでに何をやるかだけを見る画面）</div>
       <div class="filterchips" id="todoKindFilters" style="margin-bottom:6px"></div>
       <div class="filterchips" id="todayFilters" style="margin-bottom:10px"></div>
@@ -1199,6 +1206,7 @@ function migrate(){
     if(!t.side){const ln=lane(t.laneId);t.side=ln&&ln.kind==='client'?'client':'self';}
     if(!t.comms)t.comms=[];if(!t.subtasks)t.subtasks=[];
     if(t.deadlineAuto==null)t.deadlineAuto=false;
+    if(t.pinned==null)t.pinned=false;
     // 既存データの救済：カレンダー登録済みなのに締切が未設定なタスクは、終了日を自動締切として確定させる
     if(!t.deadline&&t.start&&t.end){t.deadline=t.end;t.deadlineAuto=true;}
   });
@@ -1539,33 +1547,46 @@ function renderToday(){
   const notDone=base.filter(t=>t.status!=='done');
   const done=base.filter(t=>t.status==='done');
 
+  const buildRow=(t,isDone)=>{
+    const p=proj(t.projectId);const ed=effectiveDeadline(t);
+    const kind=taskKind(t);
+    const days=ed?daysBetween(todayISO(),ed):null;
+    const cls=days==null?'':(days<=1?'soon':days<=4?'mid':'ok');
+    const label=days==null?'〆切未設定':(days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`);
+    const row=document.createElement('div');row.className='dlrow'+(isDone?' done':'');
+    row.innerHTML=`<span class="pinbtn ${t.pinned?'on':''}" title="優先プールへピン留め">📌</span>
+      <input type="checkbox" class="dlchk" ${isDone?'checked':''}>
+      <span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
+      <span class="kindtag ${kind}">${kind==='quick'?'📞 連絡・確認':'📝 立案・企画'}</span>
+      <span class="pj">${p?esc(p.name.slice(0,6)):''}</span>
+      <span class="nm">${esc(t.name)}${ed?` <span style="opacity:.55;font-size:11px;font-weight:400">〆${fmtJ(ed)}${t.deadlineAuto?'（自動）':''}</span>`:''}</span>
+      <span class="left ${cls}">${label}</span>`;
+    row.querySelector('.pinbtn').onclick=e=>{
+      e.stopPropagation();
+      t.pinned=!t.pinned;
+      save();renderToday();
+    };
+    row.querySelector('.dlchk').onclick=e=>{
+      e.stopPropagation();
+      t.status=isDone?'todo':'done';
+      save();afterTaskChange();
+    };
+    row.onclick=()=>openTask(t.id);
+    return row;
+  };
   const renderCol=(host,list,emptyMsg,isDone)=>{
     host.innerHTML='';
     if(!list.length){host.innerHTML=`<div class="emptyhint">${emptyMsg}</div>`;return;}
-    list.forEach(t=>{
-      const p=proj(t.projectId);const ed=effectiveDeadline(t);
-      const kind=taskKind(t);
-      const days=ed?daysBetween(todayISO(),ed):null;
-      const cls=days==null?'':(days<=1?'soon':days<=4?'mid':'ok');
-      const label=days==null?'〆切未設定':(days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`);
-      const row=document.createElement('div');row.className='dlrow'+(isDone?' done':'');
-      row.innerHTML=`<input type="checkbox" class="dlchk" ${isDone?'checked':''}>
-        <span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
-        <span class="kindtag ${kind}">${kind==='quick'?'📞 連絡・確認':'📝 立案・企画'}</span>
-        <span class="pj">${p?esc(p.name.slice(0,6)):''}</span>
-        <span class="nm">${esc(t.name)}${ed?` <span style="opacity:.55;font-size:11px;font-weight:400">〆${fmtJ(ed)}${t.deadlineAuto?'（自動）':''}</span>`:''}</span>
-        <span class="left ${cls}">${label}</span>`;
-      row.querySelector('.dlchk').onclick=e=>{
-        e.stopPropagation();
-        t.status=isDone?'todo':'done';
-        save();afterTaskChange();
-      };
-      row.onclick=()=>openTask(t.id);
-      host.appendChild(row);
-    });
+    list.forEach(t=>host.appendChild(buildRow(t,t.status==='done')));
   };
   renderCol($('#todoList'),notDone,'該当するタスクはありません。',false);
   renderCol($('#todoDoneList'),done,'完了済みのタスクはありません。',true);
+
+  // 優先プール：種別・プロジェクトの絞り込みに関係なく、ピン留めした全タスクを常に表示する
+  const pinned=state.tasks.filter(t=>t.projectId&&t.pinned).sort(byDeadlineAsc);
+  const pinHost=$('#todoPinned');pinHost.innerHTML='';
+  if(!pinned.length){pinHost.innerHTML='<div class="emptyhint">気になるTODOの📌をクリックすると、ここにピン留めされます。</div>';}
+  else pinned.forEach(t=>pinHost.appendChild(buildRow(t,t.status==='done')));
 }
 function renderTodoKindFilters(){
   const host=$('#todoKindFilters');if(!host)return;host.innerHTML='';
@@ -1694,7 +1715,11 @@ function openTask(id,forceProject,opts){
   let t=id?state.tasks.find(x=>x.id===id):null;
   const isNew=!t;
   if(isNew){
-    t={id:uid(),projectId:forceProject||(opts.withDates?(state.projects[0]&&state.projects[0].id):null),laneId:opts.presetLane||defaultLaneId('self'),
+    // カレンダーが「単独案件表示」（絞り込みチップで1つのプロジェクトだけが選ばれている状態）のときだけ、
+    // 予定登録時にそのプロジェクトを自動で割り振る（毎回選び直す手間を省くための仕様）。
+    // 複数プロジェクトが見えている状態では推測できないため、未割当のまま（要選択）にする。
+    const singleFilteredProjectId=()=>{const af=activeFilterProjects();return af.length===1?af[0]:null;};
+    t={id:uid(),projectId:forceProject||(opts.withDates?singleFilteredProjectId():null),laneId:opts.presetLane||defaultLaneId('self'),
       name:'',start:'',end:'',deadline:'',deadlineAuto:false,estMin:60,priority:'mid',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]};
     if(opts.withDates){t.start=opts.presetDate||state.ui.calDay||todayISO();t.end=t.start;}
     if(opts.presetLane){const ln=lane(opts.presetLane);if(ln)t.side=ln.kind==='client'?'client':'self';}
