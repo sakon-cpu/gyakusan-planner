@@ -537,8 +537,15 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .kindtag{flex:0 0 auto;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:10px;white-space:nowrap}
 .kindtag.quick{background:#e0f2fe;color:#0369a1}
 .kindtag.work{background:#fef3c7;color:#92400e}
-.todo2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
-@media(max-width:900px){.todo2col{grid-template-columns:1fr}}
+.todo3col{display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:14px;align-items:start}
+@media(max-width:1100px){
+  .todo3col{grid-template-columns:1fr 1fr}
+  .todo3col .col-notdone{grid-column:1/-1}
+}
+@media(max-width:640px){
+  .todo3col{grid-template-columns:1fr}
+  .todo3col .col-notdone{grid-column:auto}
+}
 .left.soon{color:var(--danger)} .left.mid{color:var(--warn)} .left.ok{color:var(--sub)}
 
 /* project view */
@@ -924,16 +931,18 @@ body.shared #main{padding-top:34px}
       <div class="sechead">〆切が近い順・全プロジェクト横断（いつまでに何をやるかだけを見る画面）</div>
       <div class="filterchips" id="todoKindFilters" style="margin-bottom:6px"></div>
       <div class="filterchips" id="todayFilters" style="margin-bottom:10px"></div>
-      <div class="todo2col">
-        <div>
+      <div class="todo3col">
+        <div class="col-notdone">
           <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">未完了</div>
-          <div class="card scrollbox" id="todoList" style="max-height:70vh"></div>
+          <div class="card scrollbox" id="todoList" style="max-height:74vh"></div>
         </div>
-        <div>
+        <div class="col-remind">
           <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">🔔 リマインド（戻し待ち）</div>
-          <div class="card scrollbox" id="todoRemind" style="max-height:180px;margin-bottom:14px"></div>
-          <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">完了済み（確認・リマインド用に表示）</div>
-          <div class="card scrollbox" id="todoDoneList" style="max-height:70vh"></div>
+          <div class="card scrollbox" id="todoRemind" style="max-height:74vh"></div>
+        </div>
+        <div class="col-done">
+          <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">完了済み</div>
+          <div class="card scrollbox" id="todoDoneList" style="max-height:74vh"></div>
         </div>
       </div>
     </section>
@@ -1557,7 +1566,9 @@ function renderToday(){
     .filter(t=>allowedProjects.includes(t.projectId))
     .filter(t=>kf==='all'||taskKind(t)===kf)
     .sort(byDeadlineAsc);
-  const notDone=base.filter(t=>t.status!=='done');
+  // ピン留め済みのものは優先プールに既に表示されているため、未完了枠では重複させず除外する
+  // （スクロールを増やさず、未完了枠になるべく多くの「未ピン留めタスク」を一目で見せるため）。
+  const notDone=base.filter(t=>t.status!=='done'&&!t.pinned);
   const done=base.filter(t=>t.status==='done');
 
   const buildRow=(t,isDone)=>{
