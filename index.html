@@ -527,6 +527,13 @@ input,select,textarea{font-family:inherit;font-size:14px}
 #todoPinned{background:#fffdf3;border:1px solid #f3e6b8}
 #todoPinned .emptyhint{padding:14px 16px;font-size:12.5px}
 #todoPinned .dlrow.pinned{opacity:1}
+.dlrow .bellbtn{flex:0 0 auto;cursor:pointer;font-size:13px;opacity:.3;line-height:1}
+.dlrow .bellbtn:hover{opacity:.7}
+.dlrow .bellbtn.on{opacity:1}
+.dlrow .remindmeta{opacity:.6;font-size:11px;font-weight:400;white-space:nowrap}
+.dlrow .remChk{flex:0 0 auto;width:16px;height:16px;cursor:pointer;accent-color:var(--pri,#2563eb)}
+#todoRemind{background:#fff5f0;border:1px solid #f4d3bd}
+#todoRemind .emptyhint{padding:12px 16px;font-size:12px}
 .kindtag{flex:0 0 auto;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:10px;white-space:nowrap}
 .kindtag.quick{background:#e0f2fe;color:#0369a1}
 .kindtag.work{background:#fef3c7;color:#92400e}
@@ -923,6 +930,8 @@ body.shared #main{padding-top:34px}
           <div class="card scrollbox" id="todoList" style="max-height:70vh"></div>
         </div>
         <div>
+          <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">🔔 リマインド（戻し待ち）</div>
+          <div class="card scrollbox" id="todoRemind" style="max-height:180px;margin-bottom:14px"></div>
           <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">完了済み（確認・リマインド用に表示）</div>
           <div class="card scrollbox" id="todoDoneList" style="max-height:70vh"></div>
         </div>
@@ -1209,6 +1218,8 @@ function migrate(){
     if(!t.comms)t.comms=[];if(!t.subtasks)t.subtasks=[];
     if(t.deadlineAuto==null)t.deadlineAuto=false;
     if(t.pinned==null)t.pinned=false;
+    if(t.needsReminder==null)t.needsReminder=false;
+    if(t.completedAt===undefined)t.completedAt=(t.status==='done'?todayISO():null);
     // 既存データの救済：カレンダー登録済みなのに締切が未設定なタスクは、終了日を自動締切として確定させる
     if(!t.deadline&&t.start&&t.end){t.deadline=t.end;t.deadlineAuto=true;}
   });
@@ -1557,6 +1568,7 @@ function renderToday(){
     const label=days==null?'〆切未設定':(days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`);
     const row=document.createElement('div');row.className='dlrow'+(isDone?' done':'')+(t.pinned?' pinned':'');
     row.innerHTML=`<span class="pinbtn ${t.pinned?'on':''}" title="優先プールへピン留め">📌</span>
+      ${isDone?`<span class="bellbtn ${t.needsReminder?'on':''}" title="リマインド枠へ（戻し待ち）">🔔</span>`:''}
       <input type="checkbox" class="dlchk" ${isDone?'checked':''}>
       <span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
       <span class="kindtag ${kind}">${kind==='quick'?'📞 連絡・確認':'📝 立案・企画'}</span>
@@ -1568,9 +1580,18 @@ function renderToday(){
       t.pinned=!t.pinned;
       save();renderToday();
     };
+    const bell=row.querySelector('.bellbtn');
+    if(bell)bell.onclick=e=>{
+      e.stopPropagation();
+      t.needsReminder=!t.needsReminder;
+      save();renderToday();
+    };
     row.querySelector('.dlchk').onclick=e=>{
       e.stopPropagation();
-      t.status=isDone?'todo':'done';
+      const newStatus=isDone?'todo':'done';
+      t.status=newStatus;
+      if(newStatus==='done'){ if(!t.completedAt)t.completedAt=todayISO(); }
+      else { t.completedAt=null; t.needsReminder=false; }
       save();afterTaskChange();
     };
     row.onclick=()=>openTask(t.id);
@@ -1589,6 +1610,33 @@ function renderToday(){
   const pinHost=$('#todoPinned');pinHost.innerHTML='';
   if(!pinned.length){pinHost.innerHTML='<div class="emptyhint">気になるTODOの📌をクリックすると、ここにピン留めされます。</div>';}
   else pinned.forEach(t=>pinHost.appendChild(buildRow(t,t.status==='done')));
+
+  // リマインド枠（戻し待ち）：完了済みタスクのうち🔔でマークしたものだけを、完了日・経過日数つきで表示する。
+  // TODO画面専用。チェックを入れると「対応完了」＝リマインド解除で、以後は完了済みリストにのみ残る。
+  const remindHost=$('#todoRemind');
+  if(remindHost){
+    remindHost.innerHTML='';
+    const remindList=state.tasks.filter(t=>t.projectId&&t.status==='done'&&t.needsReminder)
+      .sort((a,b)=>(a.completedAt||'').localeCompare(b.completedAt||''));
+    if(!remindList.length){remindHost.innerHTML='<div class="emptyhint">完了済みタスクの🔔をクリックすると、戻し待ちのリマインドとしてここに表示されます。</div>';}
+    remindList.forEach(t=>{
+      const p=proj(t.projectId);const kind=taskKind(t);
+      const days=t.completedAt?daysBetween(t.completedAt,todayISO()):null;
+      const row=document.createElement('div');row.className='dlrow remindrow';
+      row.innerHTML=`<span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
+        <span class="kindtag ${kind}">${kind==='quick'?'📞 連絡・確認':'📝 立案・企画'}</span>
+        <span class="pj">${p?esc(p.name.slice(0,6)):''}</span>
+        <span class="nm">${esc(t.name)} <span class="remindmeta">完了日 ${t.completedAt?fmtJ(t.completedAt):'不明'}${days!=null?`・経過${days}日`:''}</span></span>
+        <input type="checkbox" class="remChk" title="対応完了（リマインド解除して完了済みへ）">`;
+      row.querySelector('.remChk').onclick=e=>{
+        e.stopPropagation();
+        t.needsReminder=false;
+        save();renderToday();
+      };
+      row.onclick=()=>openTask(t.id);
+      remindHost.appendChild(row);
+    });
+  }
 }
 function renderTodoKindFilters(){
   const host=$('#todoKindFilters');if(!host)return;host.innerHTML='';
@@ -1722,7 +1770,7 @@ function openTask(id,forceProject,opts){
     // 複数プロジェクトが見えている状態では推測できないため、未割当のまま（要選択）にする。
     const singleFilteredProjectId=()=>{const af=activeFilterProjects();return af.length===1?af[0]:null;};
     t={id:uid(),projectId:forceProject||(opts.withDates?singleFilteredProjectId():null),laneId:opts.presetLane||defaultLaneId('self'),
-      name:'',start:'',end:'',deadline:'',deadlineAuto:false,estMin:60,priority:'mid',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]};
+      name:'',start:'',end:'',deadline:'',deadlineAuto:false,pinned:false,needsReminder:false,completedAt:null,estMin:60,priority:'mid',status:'todo',side:'self',summary:'',notes:'',subtasks:[],comms:[]};
     if(opts.withDates){t.start=opts.presetDate||state.ui.calDay||todayISO();t.end=t.start;}
     if(opts.presetLane){const ln=lane(opts.presetLane);if(ln)t.side=ln.kind==='client'?'client':'self';}
   }
@@ -1804,6 +1852,9 @@ function openTask(id,forceProject,opts){
     draft.estMin=+$('#tEst').value;
     draft.summary=$('#tSum').value;
     draft.notes=$('#tNotes').value;
+    // モーダル上のステータス変更でも、TODO画面のチェックボックス操作と同じルールで完了日・リマインドを管理する
+    if(draft.status==='done'){ if(!draft.completedAt)draft.completedAt=todayISO(); }
+    else if(t.status==='done'&&draft.status!=='done'){ draft.completedAt=null; draft.needsReminder=false; }
     if(isNew)state.tasks.push(draft);
     else{const idx=state.tasks.findIndex(x=>x.id===t.id);state.tasks[idx]=draft;}
     save();closeModal();afterTaskChange();toast('保存しました');
