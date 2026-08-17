@@ -511,7 +511,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .reco.warn .n{background:var(--warn)}
 .reco.danger .n{background:var(--danger)}
 
-.dlrow{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);cursor:pointer}
+.dlrow{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none}
 .dlrow:last-child{border-bottom:0}
 .dlrow .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
 .dlrow .pj{color:var(--sub);font-size:12px;min-width:74px}
@@ -524,7 +524,22 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dlrow .pinbtn:hover{opacity:.7}
 .dlrow .pinbtn.on{opacity:1}
 .dlrow.pinned{opacity:.45}
-.dlrow.dragging{opacity:.35;background:#eef2ff;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.draghandle{flex:0 0 auto;width:14px;height:14px;display:grid;grid-template-columns:repeat(3,3px);grid-template-rows:repeat(3,3px);gap:2px;cursor:grab;opacity:.28;align-content:center;justify-content:center}
+.draghandle:hover{opacity:.7}
+.draghandle:active{cursor:grabbing}
+.draghandle span{width:3px;height:3px;border-radius:50%;background:var(--sub,#94a3b8);display:block}
+.dlrow.dragging-float{
+  position:fixed;z-index:999;pointer-events:none;
+  box-shadow:0 12px 28px rgba(0,0,0,.28);
+  border-radius:10px;background:var(--panel);
+  transform:rotate(1.2deg) scale(1.02);
+  opacity:.97;
+}
+.drop-placeholder{
+  border:2px dashed var(--accent,#2f6df6);
+  border-radius:8px;background:rgba(47,109,246,.08);
+  margin:2px 0;box-sizing:border-box;
+}
 #todoPinned{background:#fffdf3;border:1px solid #f3e6b8}
 #todoPinned .emptyhint{padding:14px 16px;font-size:12.5px}
 #todoPinned .dlrow.pinned{opacity:1}
@@ -1600,7 +1615,8 @@ function renderToday(){
     const label=days==null?'〆切未設定':(days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`);
     const row=document.createElement('div');row.className='dlrow'+(isDone?' done':'')+(t.pinned?' pinned':'');
     row.dataset.id=t.id;
-    row.innerHTML=`<span class="pinbtn ${t.pinned?'on':''}" title="優先プールへピン留め">📌</span>
+    row.innerHTML=`<span class="draghandle" title="ドラッグで並べ替え"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+      <span class="pinbtn ${t.pinned?'on':''}" title="優先プールへピン留め">📌</span>
       ${isDone?`<span class="bellbtn ${t.needsReminder?'on':''}" title="リマインド枠へ（戻し待ち）">🔔</span>`:''}
       <input type="checkbox" class="dlchk" ${isDone?'checked':''}>
       <span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
@@ -1657,7 +1673,8 @@ function renderToday(){
       const days=t.completedAt?daysBetween(t.completedAt,todayISO()):null;
       const row=document.createElement('div');row.className='dlrow remindrow';
       row.dataset.id=t.id;
-      row.innerHTML=`<span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
+      row.innerHTML=`<span class="draghandle" title="ドラッグで並べ替え"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
         <span class="kindtag ${kind}">${kind==='quick'?'📞 連絡・確認':'📝 立案・企画'}</span>
         <span class="pj">${p?esc(p.name.slice(0,6)):''}</span>
         <span class="nm">${esc(t.name)} <span class="remindmeta">完了日 ${t.completedAt?fmtJ(t.completedAt):'不明'}${days!=null?`・経過${days}日`:''}</span></span>
@@ -1692,50 +1709,59 @@ function applyTodoLayout(){
 // TODO画面の各枠（優先プール／未完了／リマインド／完了済み）で、行をドラッグして手動で並べ替えられるようにする。
 // orderFieldにその枠専用の順序値（例：'notDoneOrder'）を書き込み、以後はrenderToday()内のwithOrder()が
 // その値を最優先でソートに使う（未設定のタスクは従来通り締切順などのデフォルト順のまま）。
+// ドラッグは行左端の「⠿」ハンドル（.draghandle）を掴んだ時だけ開始する（行全体がドラッグ対象だと
+// クリックでタスク詳細を開く操作やテキスト選択と衝突して分かりにくい、という指摘を受けての設計）。
+// ドラッグ中はつまんだカードを浮かせてポインタに追従させ、着地予測地点には点線の枠（プレースホルダー）を
+// 表示することで、どこに収まるかを操作中に視覚的に把握できるようにしている。
 function attachReorder(host,orderField){
   if(!host)return;
-  let dragEl=null,startY=0,moved=false,justDragged=false;
-  // ドラッグ操作の直後に発火するclickイベントでタスク詳細モーダルが開いてしまわないよう、
-  // captureフェーズで先回りして握りつぶす（row.onclickより先に実行される）。
-  host.addEventListener('click',e=>{
-    if(justDragged){e.stopPropagation();e.preventDefault();justDragged=false;}
-  },true);
   host.addEventListener('pointerdown',ev=>{
     if(ev.button!==0)return;
-    const row=ev.target.closest('.dlrow');
+    const handle=ev.target.closest('.draghandle');
+    if(!handle)return;
+    const row=handle.closest('.dlrow');
     if(!row||!host.contains(row))return;
-    if(ev.target.closest('.pinbtn,.bellbtn,.dlchk,.remChk'))return; // 各種ボタン操作は邪魔しない
-    dragEl=row;startY=ev.clientY;moved=false;
+    ev.preventDefault();
+    const rect=row.getBoundingClientRect();
+    const offsetY=ev.clientY-rect.top;
+    const placeholder=document.createElement('div');
+    placeholder.className='drop-placeholder';
+    placeholder.style.height=rect.height+'px';
+    row.parentNode.insertBefore(placeholder,row.nextSibling);
+    row.classList.add('dragging-float');
+    row.style.width=rect.width+'px';
+    row.style.height=rect.height+'px';
+    row.style.left=rect.left+'px';
+    row.style.top=rect.top+'px';
+    document.body.appendChild(row);
     const onMove=e=>{
-      const dy=e.clientY-startY;
-      if(!moved&&Math.abs(dy)<4)return;
-      moved=true;
-      dragEl.classList.add('dragging');
-      const rows=[...host.querySelectorAll('.dlrow')];
-      const after=rows.find(r=>{
-        if(r===dragEl)return false;
-        const rect=r.getBoundingClientRect();
-        return e.clientY<rect.top+rect.height/2;
+      row.style.top=(e.clientY-offsetY)+'px';
+      const siblings=[...host.querySelectorAll('.dlrow')]; // rowは既にbodyへ退避済みなので含まれない
+      const after=siblings.find(r=>{
+        const rr=r.getBoundingClientRect();
+        return e.clientY<rr.top+rr.height/2;
       });
-      if(after)host.insertBefore(dragEl,after);
-      else host.appendChild(dragEl);
+      if(after)host.insertBefore(placeholder,after);
+      else host.appendChild(placeholder);
     };
     const onUp=()=>{
       document.removeEventListener('pointermove',onMove);
       document.removeEventListener('pointerup',onUp);
-      if(dragEl)dragEl.classList.remove('dragging');
-      if(moved){
-        const ids=[...host.querySelectorAll('.dlrow')].map(r=>r.dataset.id);
-        ids.forEach((id,i)=>{const t=state.tasks.find(x=>x.id===id);if(t)t[orderField]=i;});
-        save();
-        justDragged=true;
-        setTimeout(()=>{justDragged=false;},200);
-      }
-      dragEl=null;
+      row.classList.remove('dragging-float');
+      row.style.position='';row.style.width='';row.style.height='';row.style.left='';row.style.top='';
+      host.insertBefore(row,placeholder);
+      placeholder.remove();
+      const ids=[...host.querySelectorAll('.dlrow')].map(r=>r.dataset.id);
+      ids.forEach((id,i)=>{const t=state.tasks.find(x=>x.id===id);if(t)t[orderField]=i;});
+      save();
     };
     document.addEventListener('pointermove',onMove);
     document.addEventListener('pointerup',onUp);
   });
+  // ハンドルを掴んだだけ（ドラッグせず離した）場合に、行のクリックでタスク詳細が開いてしまわないようにする。
+  host.addEventListener('click',e=>{
+    if(e.target.closest('.draghandle')){e.stopPropagation();e.preventDefault();}
+  },true);
 }
 function attachPinnedResizer(){
   const rz=$('#pinnedResizer');if(!rz)return;
