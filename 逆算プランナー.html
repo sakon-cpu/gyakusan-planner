@@ -524,6 +524,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dlrow .pinbtn:hover{opacity:.7}
 .dlrow .pinbtn.on{opacity:1}
 .dlrow.pinned{opacity:.45}
+.dlrow.dragging{opacity:.35;background:#eef2ff;box-shadow:0 2px 8px rgba(0,0,0,.12)}
 #todoPinned{background:#fffdf3;border:1px solid #f3e6b8}
 #todoPinned .emptyhint{padding:14px 16px;font-size:12.5px}
 #todoPinned .dlrow.pinned{opacity:1}
@@ -1571,6 +1572,15 @@ function renderToday(){
     if(!ad&&bd)return 1;
     return scoreTask(b)-scoreTask(a);
   };
+  // 手動並べ替え（ドラッグ）用：orderフィールドが設定されているタスクはその値の昇順を優先し、
+  // 未設定同士（両方null）は直前のソート結果の並び順をそのまま維持する（Array.sortの安定性を利用）。
+  const withOrder=(arr,field)=>arr.slice().sort((a,b)=>{
+    const ao=a[field],bo=b[field];
+    if(ao!=null&&bo!=null)return ao-bo;
+    if(ao!=null)return -1;
+    if(bo!=null)return 1;
+    return 0;
+  });
   // 完了/未完了を問わず対象に含める（完了済みも右側で確認・リマインドできるようにするため）。
   const base=state.tasks
     .filter(t=>t.projectId)
@@ -1579,8 +1589,8 @@ function renderToday(){
     .sort(byDeadlineAsc);
   // ピン留め済みのものは優先プールに既に表示されているため、未完了枠では重複させず除外する
   // （スクロールを増やさず、未完了枠になるべく多くの「未ピン留めタスク」を一目で見せるため）。
-  const notDone=base.filter(t=>t.status!=='done'&&!t.pinned);
-  const done=base.filter(t=>t.status==='done');
+  const notDone=withOrder(base.filter(t=>t.status!=='done'&&!t.pinned),'notDoneOrder');
+  const done=withOrder(base.filter(t=>t.status==='done'),'doneOrder');
 
   const buildRow=(t,isDone)=>{
     const p=proj(t.projectId);const ed=effectiveDeadline(t);
@@ -1589,6 +1599,7 @@ function renderToday(){
     const cls=days==null?'':(days<=1?'soon':days<=4?'mid':'ok');
     const label=days==null?'〆切未設定':(days<0?`${-days}日超過`:days===0?'今日':`あと${days}日`);
     const row=document.createElement('div');row.className='dlrow'+(isDone?' done':'')+(t.pinned?' pinned':'');
+    row.dataset.id=t.id;
     row.innerHTML=`<span class="pinbtn ${t.pinned?'on':''}" title="優先プールへピン留め">📌</span>
       ${isDone?`<span class="bellbtn ${t.needsReminder?'on':''}" title="リマインド枠へ（戻し待ち）">🔔</span>`:''}
       <input type="checkbox" class="dlchk" ${isDone?'checked':''}>
@@ -1628,7 +1639,7 @@ function renderToday(){
   renderCol($('#todoDoneList'),done,'完了済みのタスクはありません。',true);
 
   // 優先プール：種別・プロジェクトの絞り込みに関係なく、ピン留めした全タスクを常に表示する
-  const pinned=state.tasks.filter(t=>t.projectId&&t.pinned).sort(byDeadlineAsc);
+  const pinned=withOrder(state.tasks.filter(t=>t.projectId&&t.pinned).sort(byDeadlineAsc),'pinOrder');
   const pinHost=$('#todoPinned');pinHost.innerHTML='';
   if(!pinned.length){pinHost.innerHTML='<div class="emptyhint">気になるTODOの📌をクリックすると、ここにピン留めされます。</div>';}
   else pinned.forEach(t=>pinHost.appendChild(buildRow(t,t.status==='done')));
@@ -1638,13 +1649,14 @@ function renderToday(){
   const remindHost=$('#todoRemind');
   if(remindHost){
     remindHost.innerHTML='';
-    const remindList=state.tasks.filter(t=>t.projectId&&t.status==='done'&&t.needsReminder)
-      .sort((a,b)=>(a.completedAt||'').localeCompare(b.completedAt||''));
+    const remindList=withOrder(state.tasks.filter(t=>t.projectId&&t.status==='done'&&t.needsReminder)
+      .sort((a,b)=>(a.completedAt||'').localeCompare(b.completedAt||'')),'remindOrder');
     if(!remindList.length){remindHost.innerHTML='<div class="emptyhint">完了済みタスクの🔔をクリックすると、戻し待ちのリマインドとしてここに表示されます。</div>';}
     remindList.forEach(t=>{
       const p=proj(t.projectId);const kind=taskKind(t);
       const days=t.completedAt?daysBetween(t.completedAt,todayISO()):null;
       const row=document.createElement('div');row.className='dlrow remindrow';
+      row.dataset.id=t.id;
       row.innerHTML=`<span class="dot" style="background:${p?p.color:'#94a3b8'}"></span>
         <span class="kindtag ${kind}">${kind==='quick'?'📞 連絡・確認':'📝 立案・企画'}</span>
         <span class="pj">${p?esc(p.name.slice(0,6)):''}</span>
@@ -1676,6 +1688,54 @@ function applyTodoLayout(){
       const el=$(sel);if(el){el.style.height=avail+'px';el.style.maxHeight=avail+'px';}
     });
   }
+}
+// TODO画面の各枠（優先プール／未完了／リマインド／完了済み）で、行をドラッグして手動で並べ替えられるようにする。
+// orderFieldにその枠専用の順序値（例：'notDoneOrder'）を書き込み、以後はrenderToday()内のwithOrder()が
+// その値を最優先でソートに使う（未設定のタスクは従来通り締切順などのデフォルト順のまま）。
+function attachReorder(host,orderField){
+  if(!host)return;
+  let dragEl=null,startY=0,moved=false,justDragged=false;
+  // ドラッグ操作の直後に発火するclickイベントでタスク詳細モーダルが開いてしまわないよう、
+  // captureフェーズで先回りして握りつぶす（row.onclickより先に実行される）。
+  host.addEventListener('click',e=>{
+    if(justDragged){e.stopPropagation();e.preventDefault();justDragged=false;}
+  },true);
+  host.addEventListener('pointerdown',ev=>{
+    if(ev.button!==0)return;
+    const row=ev.target.closest('.dlrow');
+    if(!row||!host.contains(row))return;
+    if(ev.target.closest('.pinbtn,.bellbtn,.dlchk,.remChk'))return; // 各種ボタン操作は邪魔しない
+    dragEl=row;startY=ev.clientY;moved=false;
+    const onMove=e=>{
+      const dy=e.clientY-startY;
+      if(!moved&&Math.abs(dy)<4)return;
+      moved=true;
+      dragEl.classList.add('dragging');
+      const rows=[...host.querySelectorAll('.dlrow')];
+      const after=rows.find(r=>{
+        if(r===dragEl)return false;
+        const rect=r.getBoundingClientRect();
+        return e.clientY<rect.top+rect.height/2;
+      });
+      if(after)host.insertBefore(dragEl,after);
+      else host.appendChild(dragEl);
+    };
+    const onUp=()=>{
+      document.removeEventListener('pointermove',onMove);
+      document.removeEventListener('pointerup',onUp);
+      if(dragEl)dragEl.classList.remove('dragging');
+      if(moved){
+        const ids=[...host.querySelectorAll('.dlrow')].map(r=>r.dataset.id);
+        ids.forEach((id,i)=>{const t=state.tasks.find(x=>x.id===id);if(t)t[orderField]=i;});
+        save();
+        justDragged=true;
+        setTimeout(()=>{justDragged=false;},200);
+      }
+      dragEl=null;
+    };
+    document.addEventListener('pointermove',onMove);
+    document.addEventListener('pointerup',onUp);
+  });
 }
 function attachPinnedResizer(){
   const rz=$('#pinnedResizer');if(!rz)return;
@@ -3579,6 +3639,10 @@ function refreshViews(){
    ====================================================================== */
 function wire(){
   attachPinnedResizer();
+  attachReorder($('#todoPinned'),'pinOrder');
+  attachReorder($('#todoList'),'notDoneOrder');
+  attachReorder($('#todoRemind'),'remindOrder');
+  attachReorder($('#todoDoneList'),'doneOrder');
   window.addEventListener('resize',()=>{if(current==='today')applyTodoLayout();});
   $$('#nav .navbtn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
   $('#navAddProj').onclick=()=>editProject(null);
