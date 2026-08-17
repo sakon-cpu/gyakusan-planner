@@ -527,6 +527,11 @@ input,select,textarea{font-family:inherit;font-size:14px}
 #todoPinned{background:#fffdf3;border:1px solid #f3e6b8}
 #todoPinned .emptyhint{padding:14px 16px;font-size:12.5px}
 #todoPinned .dlrow.pinned{opacity:1}
+.pinnedwrap{position:relative}
+.vresize{position:absolute;right:3px;bottom:1px;width:18px;height:18px;cursor:ns-resize;z-index:5;
+  display:flex;align-items:flex-end;justify-content:flex-end;font-size:12px;line-height:1;color:var(--sub);
+  opacity:.4;user-select:none}
+.vresize:hover,.vresize.active{opacity:1;color:var(--accent,#2f6df6)}
 .dlrow .bellbtn{flex:0 0 auto;cursor:pointer;font-size:13px;opacity:.3;line-height:1}
 .dlrow .bellbtn:hover{opacity:.7}
 .dlrow .bellbtn.on{opacity:1}
@@ -927,7 +932,10 @@ body.shared #main{padding-top:34px}
         <div class="tools"><button class="btn pri" id="btnQuickAdd">＋ タスク追加</button></div>
       </div>
       <div class="sechead" style="margin:0 0 8px;font-size:11px;opacity:.75;text-transform:none;letter-spacing:0">📌 優先プール（ピン留めしたTODO）</div>
-      <div class="card scrollbox" id="todoPinned" style="max-height:220px;margin-bottom:18px"></div>
+      <div class="pinnedwrap" id="pinnedWrap" style="margin-bottom:18px">
+        <div class="card scrollbox" id="todoPinned" style="max-height:220px"></div>
+        <div class="vresize" id="pinnedResizer" title="ドラッグで優先プールの高さを調整（下の枠が押し出されます）">⤢</div>
+      </div>
       <div class="sechead">〆切が近い順・全プロジェクト横断（いつまでに何をやるかだけを見る画面）</div>
       <div class="filterchips" id="todoKindFilters" style="margin-bottom:6px"></div>
       <div class="filterchips" id="todayFilters" style="margin-bottom:10px"></div>
@@ -1213,8 +1221,9 @@ function migrate(){
   if(state.ui&&state.ui.todoKindFilter==null)state.ui.todoKindFilter='all';
   if(state.ui&&state.ui.printShowDuration==null)state.ui.printShowDuration=true;
   if(state.ui&&state.ui.showDurWM==null)state.ui.showDurWM=true;
-  (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||/client/i.test(l.name)))?'client':'self';});
+  (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||l.name.includes('貴社')||/client/i.test(l.name)))?'client':'self';});
   (state.projects||[]).forEach(p=>{if(p.client==null)p.client='';});
+  if(state.ui&&state.ui.pinnedH==null)state.ui.pinnedH=220;
   const firstSelf=()=>{const l=(state.lanes||[]).find(x=>x.kind==='self')||state.lanes[0];return l?l.id:null;};
   const firstClient=()=>{const l=(state.lanes||[]).find(x=>x.kind==='client')||state.lanes[0];return l?l.id:null;};
   // ensure every task has the unified fields
@@ -1260,7 +1269,7 @@ function seed(){
     settings:{workStart:'10:00',workEnd:'22:00',useWeekend:false,customHolidays:[{date:d(20),name:'創立記念日'}],dailyCap:180},
     google:{clientId:'',busyCalendars:[],useForPlanning:true},
     blocks:[],
-    lanes:[{id:lSelf,name:'自社',kind:'self'},{id:lClient,name:'先方',kind:'client'}],
+    lanes:[{id:lSelf,name:'自社',kind:'self'},{id:lClient,name:'貴社',kind:'client'}],
     projects:[
       {id:p1,name:'映画A（自社ブランディング）',color:'#2f6df6',deadline:d(84),status:'active',selfContained:false,client:''},
       {id:p2,name:'YouTube案件B',color:'#e5484d',deadline:d(20),status:'active',selfContained:false,client:''},
@@ -1289,8 +1298,10 @@ const proj=id=>state.projects.find(p=>p.id===id);
 const lane=id=>state.lanes.find(l=>l.id===id);
 // カレンダー選択中カード（複数選択対応） / クリップボード / ホバー中の日付・レーン（保存不要の一時UI状態）
 let SELECTED_CARDS=new Set(), CLIPBOARD_CARDS=[], HOVER_DATE=null, HOVER_LANE=null;
-function laneWidths(){
-  const lanes=state.lanes;const n=lanes.length||1;
+function laneWidths(lanesArg){
+  // lanesArgを渡した場合は、その（表示中の）レーンだけを対象に幅を100%に正規化する。
+  // 貴社レーンが非表示の時にstate.lanes全体を基準にすると、残ったレーンの幅がずれてしまうため。
+  const lanes=lanesArg||state.lanes;const n=lanes.length||1;
   let total=0;
   lanes.forEach(l=>{if(!l.widthPct||l.widthPct<=0)l.widthPct=100/n;total+=l.widthPct;});
   if(total>0&&Math.abs(total-100)>0.01)lanes.forEach(l=>l.widthPct=l.widthPct/total*100);
@@ -1648,6 +1659,45 @@ function renderToday(){
       remindHost.appendChild(row);
     });
   }
+  applyTodoLayout();
+}
+// 優先プールの高さ（ドラッグで可変）と、その下の3列（未完了/リマインド/完了済み）の高さを
+// 画面の実際の残り空間に合わせて調整する。優先プールを広げるとその分下が押し出され、
+// 逆に優先プールを狭めると下のTODO/リマインド枠が広く使えるようになる。
+function applyTodoLayout(){
+  const pinnedEl=$('#todoPinned');if(!pinnedEl)return;
+  const h=Math.max(60,Math.min(window.innerHeight*0.7,state.ui.pinnedH||220));
+  pinnedEl.style.height=h+'px';pinnedEl.style.maxHeight=h+'px';
+  const grid=document.querySelector('.todo3col');
+  if(grid){
+    const top=grid.getBoundingClientRect().top;
+    const avail=Math.max(220,window.innerHeight-top-24);
+    ['#todoList','#todoRemind','#todoDoneList'].forEach(sel=>{
+      const el=$(sel);if(el){el.style.height=avail+'px';el.style.maxHeight=avail+'px';}
+    });
+  }
+}
+function attachPinnedResizer(){
+  const rz=$('#pinnedResizer');if(!rz)return;
+  rz.addEventListener('pointerdown',ev=>{
+    ev.preventDefault();ev.stopPropagation();
+    const startY=ev.clientY;
+    const h0=Math.max(60,state.ui.pinnedH||220);
+    rz.classList.add('active');
+    function onMove(e){
+      const dy=e.clientY-startY;
+      const maxH=Math.max(160,window.innerHeight*0.7);
+      state.ui.pinnedH=Math.min(maxH,Math.max(60,h0+dy));
+      applyTodoLayout();
+    }
+    function onUp(){
+      document.removeEventListener('pointermove',onMove);
+      document.removeEventListener('pointerup',onUp);
+      rz.classList.remove('active');save();
+    }
+    document.addEventListener('pointermove',onMove);
+    document.addEventListener('pointerup',onUp);
+  });
 }
 function renderTodoKindFilters(){
   const host=$('#todoKindFilters');if(!host)return;host.innerHTML='';
@@ -1707,7 +1757,7 @@ function renderProject(){
       <span>最終締切：<b>${p.deadline?fmtJ(p.deadline):'未設定'}</b></span>
       <div class="progress"><i style="width:${prog}%;background:${p.color}"></i></div>
       <span><b>${prog}%</b>（${done}/${tasks.length}）</span>
-      <span>${p.selfContained?'自社完結':'先方あり'}</span>
+      <span>${p.selfContained?'自社完結':'貴社あり'}</span>
     </div>
     ${next?`<div class="card" style="padding:14px 18px;margin-bottom:16px;border-left:4px solid ${p.color}">
       <div class="sechead" style="margin:0 0 4px">次にやるべきこと</div>
@@ -1731,7 +1781,7 @@ function taskRow(t){
   const done=t.status==='done';
   const row=document.createElement('div');row.className='trow'+(done?' done':'');
   const total=t.subtasks.length, dn=t.subtasks.filter(s=>s.done).length;
-  const ln=lane(t.laneId);const sideName=ln?ln.name:(t.side==='client'?'先方':'自社');
+  const ln=lane(t.laneId);const sideName=ln?ln.name:(t.side==='client'?'貴社':'自社');
   const period=(t.start&&t.end)?`🗓 ${t.start===t.end?fmtJ(t.start):fmtRange(t.start,t.end)}`:'';
   const ed=effectiveDeadline(t);
   row.innerHTML=`<div class="chk ${done?'done':''}">${done?'✓':''}</div>
@@ -1794,8 +1844,8 @@ function openTask(id,forceProject,opts){
         <div><label>プロジェクト</label><select id="tProj"><option value="">（INBOX / 未割当）</option>
           ${state.projects.filter(p=>p.status==='active').map(p=>`<option value="${p.id}" ${p.id===pcur?'selected':''}>${esc(p.name)}</option>`).join('')}
         </select></div>
-        <div><label>レーン（自社／先方など）</label><select id="tLane">
-          ${state.lanes.map(l=>`<option value="${l.id}" ${l.id===t.laneId?'selected':''}>${esc(l.name)}</option>`).join('')}
+        <div><label>レーン（自社／貴社など）</label><select id="tLane">
+          ${lanesForProject(pcur).map(l=>`<option value="${l.id}" ${l.id===t.laneId?'selected':''}>${esc(laneOptionLabel(l,pcur))}</option>`).join('')}
         </select></div>
       </div>
       <div class="field row" style="align-items:flex-end">
@@ -1844,6 +1894,15 @@ function openTask(id,forceProject,opts){
   renderSubs();
   $('#subNew').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.value.trim()){draft.subtasks.push({id:uid(),text:e.target.value.trim(),done:false});e.target.value='';renderSubs();}});
   segBind('#tPri',v=>draft.priority=v);segBind('#tStat',v=>draft.status=v);
+  // プロジェクトを切り替えたら、そのプロジェクトが「自社完結」かどうかに応じてレーン選択肢を絞り込み、
+  // 貴社レーンの表示名もそのプロジェクトの取引先名に合わせて差し替える。
+  $('#tProj').addEventListener('change',()=>{
+    const pid=$('#tProj').value||null;
+    const opts=lanesForProject(pid);
+    const curLane=$('#tLane').value;
+    const keep=opts.some(l=>l.id===curLane);
+    $('#tLane').innerHTML=opts.map(l=>`<option value="${l.id}" ${(keep&&l.id===curLane)?'selected':''}>${esc(laneOptionLabel(l,pid))}</option>`).join('');
+  });
   $('#mClose').onclick=$('#tCancel').onclick=closeModal;
   $('#tDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('このタスクを削除しますか？（カレンダーからも消えます）')){state.tasks=state.tasks.filter(x=>x.id!==t.id);save();closeModal();afterTaskChange();}};
   $('#tSave').onclick=()=>{
@@ -1885,10 +1944,11 @@ function editProject(id){
       <div class="field"><label>プロジェクト名</label><input type="text" id="pName" value="${esc(d.name)}"></div>
       <div class="field"><label>カラー</label><div class="swatchpick" id="pColor"></div></div>
       <div class="field"><label>最終締切</label><input type="date" id="pDead" value="${d.deadline||''}"></div>
-      <div class="field"><label>取引先名（テキスト出力で「先方」の代わりに表示・任意）</label><input type="text" id="pClient" value="${esc(d.client||'')}" placeholder="例：Curioさま"></div>
+      <div class="field"><label>取引先名（カレンダーのレーン名・テキスト出力で「貴社」の代わりに表示・任意）</label><input type="text" id="pClient" value="${esc(d.client||'')}" placeholder="例：CURIO様"></div>
       <div class="field"><label>種別</label><div class="seg" id="pSelf">
-        <button data-v="no" class="${d.selfContained?'':'on'}">先方あり（自社/先方レーンを使う）</button>
+        <button data-v="no" class="${d.selfContained?'':'on'}">貴社あり（自社/貴社レーンを使う）</button>
         <button data-v="yes" class="${d.selfContained?'on':''}">自社完結</button></div></div>
+      <div style="color:var(--sub);font-size:12px;margin:-6px 0 12px">「自社完結」のプロジェクトは、カレンダー・タスク登録の両方で貴社レーンが使われなくなります。複数プロジェクトを同時表示していて貴社レーンが必要なものが混ざる場合は、レーンが多い方（貴社あり）が優先されて強制的に表示されます。</div>
     </div>
     <div class="mf"><button class="btn ghost" id="pDel" style="color:var(--danger)">${isNew?'':'削除'}</button>
       <div style="display:flex;gap:8px"><button class="btn" id="pCancel">キャンセル</button><button class="btn pri" id="pSave">保存</button></div></div>`);
@@ -1940,15 +2000,49 @@ function rangeCol(start,n){
   const a=parseISO(days[0]),b=parseISO(days[days.length-1]);
   return {title:`${a.getMonth()+1}/${a.getDate()} - ${b.getMonth()+1}/${b.getDate()}`,days,type:'range'};
 }
-function visibleLanes(){
-  // If every visible project is self-contained AND no card uses client lane, hide client lanes
-  return state.lanes;
-}
 function activeFilterProjects(){
   const f=state.ui.filter;
   if(f==='all')return state.projects.map(p=>p.id);
   if(Array.isArray(f))return f;
   return [f];
+}
+// 貴社レーンが必要かどうか：表示中のプロジェクトの中に「自社完結ではない」ものが1つでもあれば必要とみなす。
+// さらに、（自社完結に切り替わった後などで）既にそのレーンにタスクが残っている場合も、データを見失わないよう表示を維持する。
+function scopeNeedsClientLane(allowed){
+  const inScope=state.projects.filter(p=>allowed.includes(p.id));
+  if(!inScope.length)return true; // フィルタ対象のプロジェクトが特定できない時は安全側に倒して表示する
+  if(inScope.some(p=>!p.selfContained))return true;
+  return state.tasks.some(t=>allowed.includes(t.projectId)&&lane(t.laneId)&&lane(t.laneId).kind==='client');
+}
+function visibleLanes(){
+  // 複数プロジェクトが混在していて、レーン構成（自社のみ／自社+貴社）に矛盾がある場合は、
+  // レーンが多い方（自社+貴社）を優先して強制的に表示する。
+  const allowed=activeFilterProjects();
+  if(scopeNeedsClientLane(allowed))return state.lanes;
+  return state.lanes.filter(l=>l.kind!=='client');
+}
+// 貴社レーンの表示名：単独プロジェクト表示（絞り込みで1件だけが選ばれている状態）で、
+// そのプロジェクトに取引先名が設定されていればそれを使う（例：CURIO様）。
+// 複数プロジェクトが同時に選ばれている場合は競合を避けるため常に「貴社」に統一する。
+function clientLaneLabel(){
+  const allowed=activeFilterProjects();
+  if(allowed.length===1){
+    const p=proj(allowed[0]);
+    if(p&&!p.selfContained&&p.client&&p.client.trim())return p.client.trim();
+  }
+  return '貴社';
+}
+// タスク編集モーダルのレーン選択肢：そのタスクのプロジェクトが自社完結なら貴社レーンを除外する。
+function lanesForProject(pid){
+  const p=pid?proj(pid):null;
+  if(p&&p.selfContained)return state.lanes.filter(l=>l.kind!=='client');
+  return state.lanes;
+}
+function laneOptionLabel(l,pid){
+  if(l.kind!=='client')return l.name;
+  const p=pid?proj(pid):null;
+  if(p&&p.client&&p.client.trim())return p.client.trim();
+  return l.name;
 }
 function rowHeight(){
   const g=state.ui.gran;
@@ -1982,7 +2076,7 @@ function renderCalendar(){
   state.tasks.filter(t=>t.status!=='done'&&t.deadline&&t.projectId&&allowed.includes(t.projectId)).forEach(t=>{
     (dlByDate[t.deadline]=dlByDate[t.deadline]||[]).push({color:projColor(t.projectId),name:t.name});
   });
-  const laneW=laneWidths(); // %表記（合計100）。ユーザーがドラッグで調整可能
+  const laneW=laneWidths(lanes); // %表記（合計100）。ユーザーがドラッグで調整可能
   const laneCum=[];{let acc=0;laneW.forEach(w=>{laneCum.push(acc);acc+=w;});}
   paintMonthCols(host,cols,{bufOffset,allowed,lanes,laneW,laneCum,H,dlByDate,showSummary:(state.ui.gran==='3month'||state.ui.gran==='1month'),interactive:!READONLY});
 }
@@ -1996,7 +2090,7 @@ function paintMonthCols(host,cols,ctx){
     if(bufOffset&&(colIdx===0||colIdx===cols.length-1))mc.dataset.buf='1';
     // レーン見出し(.lh)の%幅は、行側の.lanecellsと同じく「日付欄(gut)を除いた残り幅」を基準に計算する必要がある。
     // .lanehdr自体（gut込みの全幅）を基準にしてしまうと、gutの分だけ見出しが実際のマス目より広くなり、境界線がずれる原因になっていた。
-    let laneHdr=`<div class="lanehdr"><div class="gut"></div><div class="lanehdrcells">`+lanes.map((l,li)=>`<div class="lh ${l.kind==='client'?'client':''}" style="flex:0 0 ${laneW[li]}%">${esc(l.name)}${l.kind==='client'?' <span style="font-size:9px;opacity:.7">〔破線枠〕</span>':''}</div>`).join('')+`</div></div>`;
+    let laneHdr=`<div class="lanehdr"><div class="gut"></div><div class="lanehdrcells">`+lanes.map((l,li)=>`<div class="lh ${l.kind==='client'?'client':''}" style="flex:0 0 ${laneW[li]}%">${esc(l.kind==='client'?clientLaneLabel():l.name)}${l.kind==='client'?' <span style="font-size:9px;opacity:.7">〔破線枠〕</span>':''}</div>`).join('')+`</div></div>`;
     let rows='';
     col.days.forEach((ds,i)=>{
       const d=parseISO(ds);const wd=d.getDay();const hol=holidayName(ds);
@@ -2107,7 +2201,7 @@ function paintMonthCols(host,cols,ctx){
         const rz=document.createElement('div');rz.className='lanerz';rz.dataset.idx=li;rz.title='ドラッグでレーン幅を調整';
         rz.style.left=(x-5)+'px';
         hdrEl.appendChild(rz);
-        attachLaneResizer(rz,li);
+        attachLaneResizer(rz,li,lanes);
       });
     });
     if(bufOffset)initSeamlessMonthScroll(host);
@@ -2137,19 +2231,20 @@ function initSeamlessMonthScroll(host){
     },160);
   };
 }
-function attachLaneResizer(rz,idx){
+function attachLaneResizer(rz,idx,lanesList){
   rz.addEventListener('pointerdown',ev=>{
     ev.preventDefault();ev.stopPropagation();
     const container=rz.closest('.lanehdr');
     const rect=container.getBoundingClientRect();
-    const w0=laneWidths();const wi0=w0[idx],wn0=w0[idx+1];
+    const list=lanesList||state.lanes;
+    const w0=laneWidths(list);const wi0=w0[idx],wn0=w0[idx+1];
     const startX=ev.clientX;
     rz.classList.add('active');
     function onMove(e){
       const deltaPct=(e.clientX-startX)/rect.width*100;
       let wi=Math.max(8,Math.min(wi0+wn0-8,wi0+deltaPct));
       let wn=wi0+wn0-wi;
-      state.lanes[idx].widthPct=wi; state.lanes[idx+1].widthPct=wn;
+      list[idx].widthPct=wi; list[idx+1].widthPct=wn;
       renderCalendar();
       document.querySelectorAll('.lanerz').forEach(r=>{if(+r.dataset.idx===idx)r.classList.add('active');});
     }
@@ -2546,7 +2641,7 @@ function renderLaneTools(){
   const host=$('#laneTools');host.innerHTML='<span style="font-size:12px;color:var(--sub);font-weight:700">レーン:</span>';
   state.lanes.forEach(l=>{
     const t=document.createElement('span');t.className='lanetag';t.title='クリックで名前・種別を編集';
-    const kindTxt=l.kind==='client'?'先方':'自社';const showKind=l.name!==kindTxt;
+    const kindTxt=l.kind==='client'?'貴社':'自社';const showKind=l.name!==kindTxt;
     t.innerHTML=`<span class="nm2">${esc(l.name)}</span>${showKind?`<span style="font-size:9px;color:var(--sub)">${kindTxt}</span>`:''}<span class="rm" title="削除">✕</span>`;
     t.querySelector('.nm2').onclick=()=>laneModal(l.id);
     t.querySelector('.rm').onclick=(e)=>{
@@ -2571,8 +2666,8 @@ function laneModal(id){
     <div class="mb">
       <div class="field"><label>レーン名</label><input type="text" id="lName" value="${esc(d.name)}" placeholder="例：制作 / 編集 / 先方B"></div>
       <div class="field"><label>種別（枠のスタイルで区別されます）</label>
-        <div class="seg" id="lKind"><button data-v="self" class="${d.kind!=='client'?'on':''}">自社（実線枠）</button><button data-v="client" class="${d.kind==='client'?'on':''}">先方（破線枠）</button></div></div>
-      <div style="color:var(--sub);font-size:12px">プロジェクトの色は共通のまま、自社は実線枠・先方は破線枠でカードを区別します。</div>
+        <div class="seg" id="lKind"><button data-v="self" class="${d.kind!=='client'?'on':''}">自社（実線枠）</button><button data-v="client" class="${d.kind==='client'?'on':''}">貴社（破線枠）</button></div></div>
+      <div style="color:var(--sub);font-size:12px">プロジェクトの色は共通のまま、自社は実線枠・貴社は破線枠でカードを区別します。貴社レーンの表示名は、単独プロジェクト表示中はそのプロジェクトの取引先名（設定→取引先名）に、複数プロジェクト表示中は「貴社」に自動的に切り替わります。</div>
     </div>
     <div class="mf"><span></span><div style="display:flex;gap:8px"><button class="btn" id="lCancel">キャンセル</button><button class="btn pri" id="lSave">保存</button></div></div>`);
   segBind('#lKind',v=>d.kind=v);
@@ -2881,7 +2976,7 @@ function buildCalRenderCtx(){
   state.tasks.filter(t=>t.status!=='done'&&t.deadline&&t.projectId&&allowed.includes(t.projectId)).forEach(t=>{
     (dlByDate[t.deadline]=dlByDate[t.deadline]||[]).push({color:projColor(t.projectId),name:t.name});
   });
-  const laneW=laneWidths();
+  const laneW=laneWidths(lanes);
   const laneCum=[];{let acc=0;laneW.forEach(w=>{laneCum.push(acc);acc+=w;});}
   return {lanes,allowed,dlByDate,laneW,laneCum};
 }
@@ -3126,7 +3221,7 @@ function openPrintModal(){
 
 /* ---- text export of the schedule (for pasting into emails/chat to clients) ---- */
 function fmtRange(s,e){return s===e?fmtJ(s):`${fmtJ(s)}〜${fmtJ(e)}`;}
-// lane tag: 先方系レーンでプロジェクトに取引先名があればその名前を使う
+// lane tag: 貴社系レーンでプロジェクトに取引先名があればその名前を使う
 function laneTag(card){const ln=lane(card.laneId),p=proj(card.projectId);if(ln&&ln.kind==='client'&&p&&p.client)return p.client;return ln?ln.name:'';}
 function cardLine(c,withProject){
   const p=proj(c.projectId);
@@ -3180,7 +3275,7 @@ function openTextModal(){
         <label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="txTasks" style="margin-right:6px">タスクの締切も含める</label>
         <label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="txDead" style="margin-right:6px">プロジェクトの最終締切を表示</label>
       </div>
-      <div style="font-size:12px;color:var(--sub);margin:-4px 0 12px">「先方」の表示名は、各プロジェクトの設定「取引先名」で変更できます（例：Curioさま）。</div>
+      <div style="font-size:12px;color:var(--sub);margin:-4px 0 12px">「貴社」の表示名は、各プロジェクトの設定「取引先名」で変更できます（例：CURIO様）。</div>
       <div class="field"><label>プレビュー（そのままコピーして送れます）</label>
         <textarea id="txOut" readonly style="min-height:300px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;white-space:pre;overflow:auto"></textarea></div>
     </div>
@@ -3483,6 +3578,8 @@ function refreshViews(){
    WIRING
    ====================================================================== */
 function wire(){
+  attachPinnedResizer();
+  window.addEventListener('resize',()=>{if(current==='today')applyTodoLayout();});
   $$('#nav .navbtn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
   $('#navAddProj').onclick=()=>editProject(null);
   $('#navGoogle').onclick=async()=>{if(gTokenValid()){switchView('settings');}else{await gConnect(true);updateGoogleNav();}};
