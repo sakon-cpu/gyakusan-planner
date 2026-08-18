@@ -1587,9 +1587,24 @@ function renderToday(){
     if(!ad&&bd)return 1;
     return scoreTask(b)-scoreTask(a);
   };
-  // 手動並べ替え（ドラッグ）用：orderフィールドが設定されているタスクはその値の昇順を優先し、
-  // 未設定同士（両方null）は直前のソート結果の並び順をそのまま維持する（Array.sortの安定性を利用）。
-  const withOrder=(arr,field)=>arr.slice().sort((a,b)=>{
+  // 〆切の近さは常に最優先（手動並べ替えより上位）で強制する：〆切のある方が無い方より必ず上、
+  // 〆切同士は日付が近い方が必ず上。両方とも〆切が無い（＝同じ「近さ」）の場合に限り、
+  // 手動並べ替え・既定の並び順（スコア順）へ委ねる。「今日／あと1日」等のタスクが、後から追加された
+  // 別のタスクの手動並べ替えに巻き込まれて下に埋もれてしまわないようにするための措置。
+  const deadlinePrimary=(a,b)=>{
+    const ad=effectiveDeadline(a),bd=effectiveDeadline(b);
+    if(ad&&bd)return ad.localeCompare(bd);
+    if(ad&&!bd)return -1;
+    if(!ad&&bd)return 1;
+    return 0;
+  };
+  const completedAtPrimary=(a,b)=>(a.completedAt||'').localeCompare(b.completedAt||'');
+  // 手動並べ替え（ドラッグ）用：まずprimaryCmp（〆切の近さ等）で強制的に順序を決め、
+  // そこが同着（＝〆切の近さが同じ）の場合に限ってorderフィールド（ドラッグで保存した順序）を使う。
+  // それも両方未設定なら、直前のソート結果の並び順をそのまま維持する（Array.sortの安定性を利用）。
+  const withOrder=(arr,field,primaryCmp)=>arr.slice().sort((a,b)=>{
+    const pc=primaryCmp?primaryCmp(a,b):0;
+    if(pc!==0)return pc;
     const ao=a[field],bo=b[field];
     if(ao!=null&&bo!=null)return ao-bo;
     if(ao!=null)return -1;
@@ -1604,8 +1619,8 @@ function renderToday(){
     .sort(byDeadlineAsc);
   // ピン留め済みのものは優先プールに既に表示されているため、未完了枠では重複させず除外する
   // （スクロールを増やさず、未完了枠になるべく多くの「未ピン留めタスク」を一目で見せるため）。
-  const notDone=withOrder(base.filter(t=>t.status!=='done'&&!t.pinned),'notDoneOrder');
-  const done=withOrder(base.filter(t=>t.status==='done'),'doneOrder');
+  const notDone=withOrder(base.filter(t=>t.status!=='done'&&!t.pinned),'notDoneOrder',deadlinePrimary);
+  const done=withOrder(base.filter(t=>t.status==='done'),'doneOrder',deadlinePrimary);
 
   const buildRow=(t,isDone)=>{
     const p=proj(t.projectId);const ed=effectiveDeadline(t);
@@ -1655,7 +1670,7 @@ function renderToday(){
   renderCol($('#todoDoneList'),done,'完了済みのタスクはありません。',true);
 
   // 優先プール：種別・プロジェクトの絞り込みに関係なく、ピン留めした全タスクを常に表示する
-  const pinned=withOrder(state.tasks.filter(t=>t.projectId&&t.pinned).sort(byDeadlineAsc),'pinOrder');
+  const pinned=withOrder(state.tasks.filter(t=>t.projectId&&t.pinned).sort(byDeadlineAsc),'pinOrder',deadlinePrimary);
   const pinHost=$('#todoPinned');pinHost.innerHTML='';
   if(!pinned.length){pinHost.innerHTML='<div class="emptyhint">気になるTODOの📌をクリックすると、ここにピン留めされます。</div>';}
   else pinned.forEach(t=>pinHost.appendChild(buildRow(t,t.status==='done')));
@@ -1666,7 +1681,7 @@ function renderToday(){
   if(remindHost){
     remindHost.innerHTML='';
     const remindList=withOrder(state.tasks.filter(t=>t.projectId&&t.status==='done'&&t.needsReminder)
-      .sort((a,b)=>(a.completedAt||'').localeCompare(b.completedAt||'')),'remindOrder');
+      .sort(completedAtPrimary),'remindOrder',completedAtPrimary);
     if(!remindList.length){remindHost.innerHTML='<div class="emptyhint">完了済みタスクの🔔をクリックすると、戻し待ちのリマインドとしてここに表示されます。</div>';}
     remindList.forEach(t=>{
       const p=proj(t.projectId);const kind=taskKind(t);
