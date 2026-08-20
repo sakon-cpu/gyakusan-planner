@@ -1265,6 +1265,16 @@ function migrate(){
     });
     state.migratedForceDeadlineV1=true;
   }
+  // 一度きりの強制再同期（2026-08-17）：「手入力した締切はカレンダー操作で上書きしない」という
+  // 凍結仕様を廃止し、カレンダー登録済みタスクは締切＝終了日を常に一致させる方式へ変更した。
+  // 既存データの中には、この仕様変更より前にカレンダー側だけを動かして締切が古いまま残っている
+  // タスクがあり得るため（実際にユーザーから報告あり）、一度だけ全件を強制的に再同期する。
+  if(!state.migratedDeadlineSyncV2){
+    (state.tasks||[]).forEach(t=>{
+      if(t.start&&t.end){t.deadline=t.end;t.deadlineAuto=true;}
+    });
+    state.migratedDeadlineSyncV2=true;
+  }
   // one-time: fold legacy calendar "cards" into tasks so calendar⇄TODO share one source
   if(Array.isArray(state.cards)){
     state.cards.forEach(c=>{
@@ -1392,12 +1402,14 @@ function remainingMin(t){return Math.round(t.estMin*(1-taskProgress(t)));}
 // 明示的な締切が未設定でも、カレンダーに登録した終了日（単発予定ならその日）を締切として自動的に扱う。
 // 提出物やMTGは「カレンダー上のその日」＝実質の締切であることがほとんどなので、二重入力をなくすための仕様。
 function effectiveDeadline(t){return t.deadline||t.end||null;}
-// カレンダーに登録（start/end確定）された瞬間、その終了日を締切として実際に書き込む。
-// t.deadlineAutoフラグで「自動で入れた締切」か「本人が手で入れた締切」かを区別し、
-// 自動セット分だけは終了日の変更（延長・短縮・移動）に追従して更新し続ける。
+// カレンダー登録済み（start/endあり）のタスクは、締切＝終了日を常に一致させる（2026-08-17改訂）。
+// 以前は「手入力した締切はカレンダー操作で上書きしない」という凍結仕様だったが、
+// 「カレンダー側を動かしたのにTODOの締切が古いまま」という混乱を避けるため、
+// カレンダー登録済みタスクについては常にカレンダーの終了日を正として締切へ反映するように統一した。
+// （逆にタスク編集モーダルで締切を手入力した場合も、終了日側へ反映される。openTaskの#tSave/#tEnd/#tDead参照）
 function applyAutoDeadline(t){
   if(!t.start||!t.end)return;
-  if(!t.deadline||t.deadlineAuto){t.deadline=t.end;t.deadlineAuto=true;}
+  t.deadline=t.end;t.deadlineAuto=true;
 }
 // タスク名・所要時間から「連絡・報告・確認」系か「立案・企画」系かを推定する（手動フィールドを増やさず自動判定）
 function taskKind(t){
@@ -2004,6 +2016,24 @@ function openTask(id,forceProject,opts){
     const keep=opts.some(l=>l.id===curLane);
     $('#tLane').innerHTML=opts.map(l=>`<option value="${l.id}" ${(keep&&l.id===curLane)?'selected':''}>${esc(laneOptionLabel(l,pid))}</option>`).join('');
   });
+  // 締切と終了日を双方向に連動させる：カレンダー登録済み（開始日・終了日とも入力済み）のタスクに限り、
+  // 終了日を動かせば締切欄にも即座に反映し、締切欄を手で書き換えれば終了日（必要なら開始日も）を追従させる。
+  // 「手動で変えたらカレンダーも変わり、カレンダーを変えたらTODOのカードも変わるように」という要望に対応。
+  // カレンダー未登録（開始日・終了日が空）のタスクは、締切だけを独立して自由に設定できる従来通りの挙動を維持する。
+  $('#tEnd').addEventListener('input',()=>{
+    const v=$('#tEnd').value;
+    if(!v)return;
+    $('#tDead').value=v;
+    if($('#tStart').value&&$('#tStart').value>v)$('#tStart').value=v;
+  });
+  $('#tDead').addEventListener('input',()=>{
+    const v=$('#tDead').value;
+    if(!v)return;
+    if($('#tStart').value&&$('#tEnd').value){ // カレンダー登録済みの時だけ終了日側へ反映する
+      $('#tEnd').value=v;
+      if($('#tStart').value>v)$('#tStart').value=v;
+    }
+  });
   $('#mClose').onclick=$('#tCancel').onclick=closeModal;
   $('#tDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('このタスクを削除しますか？（カレンダーからも消えます）')){state.tasks=state.tasks.filter(x=>x.id!==t.id);save();closeModal();afterTaskChange();}};
   $('#tSave').onclick=()=>{
@@ -2017,9 +2047,18 @@ function openTask(id,forceProject,opts){
     if(draft.end&&!draft.start)draft.start=draft.end;
     if(draft.start&&draft.end&&draft.end<draft.start)draft.end=draft.start;
     const deadInput=$('#tDead').value||'';
-    if(deadInput){draft.deadline=deadInput;draft.deadlineAuto=false;}
-    else if(draft.start&&draft.end){draft.deadline=draft.end;draft.deadlineAuto=true;}
-    else{draft.deadline='';draft.deadlineAuto=false;}
+    if(draft.start&&draft.end){
+      // カレンダー登録済みのタスクは締切＝終了日を常に一致させる（画面上のoninputで既に同期済みのはずだが、
+      // 保存時にも念のため強制する。手動固定という概念は廃止し、常にカレンダー側と締切が食い違わないようにする）。
+      draft.deadline=deadInput||draft.end;
+      draft.end=draft.deadline;
+      if(draft.start>draft.end)draft.start=draft.end;
+      draft.deadlineAuto=true;
+    } else if(deadInput){
+      draft.deadline=deadInput;draft.deadlineAuto=false;
+    } else {
+      draft.deadline='';draft.deadlineAuto=false;
+    }
     draft.estMin=+$('#tEst').value;
     draft.summary=$('#tSum').value;
     draft.notes=$('#tNotes').value;
@@ -2630,7 +2669,7 @@ function startGroupDrag(el,card,ctx,ev,group){
     clearHot();
     if(!active){ selectCalCard(el,card.id,ev.shiftKey||ev.metaKey||ev.ctrlKey); return; }
     if(dayShift!==0){
-      group.forEach(t=>{const o=orig[t.id];t.start=iso(addDays(parseISO(o.start),dayShift));t.end=iso(addDays(parseISO(o.end),dayShift));if(t.deadlineAuto)t.deadline=t.end;});
+      group.forEach(t=>{const o=orig[t.id];t.start=iso(addDays(parseISO(o.start),dayShift));t.end=iso(addDays(parseISO(o.end),dayShift));applyAutoDeadline(t);});
       save();toast(`${group.length}件をまとめて移動しました（間隔はそのまま）`);
     }
     renderCalendar();renderNav();
