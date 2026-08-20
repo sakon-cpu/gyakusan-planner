@@ -1327,11 +1327,45 @@ let SELECTED_CARDS=new Set(), CLIPBOARD_CARDS=[], HOVER_DATE=null, HOVER_LANE=nu
 function laneWidths(lanesArg){
   // lanesArgを渡した場合は、その（表示中の）レーンだけを対象に幅を100%に正規化する。
   // 貴社レーンが非表示の時にstate.lanes全体を基準にすると、残ったレーンの幅がずれてしまうため。
+  // ※これはレーン幅がプロジェクト横断の共通値だった旧仕様の名残（2026-08-20時点では未使用箇所なし）。
+  // 現在は effectiveLaneWidths() がプロジェクト毎の幅を解決してから使う。
   const lanes=lanesArg||state.lanes;const n=lanes.length||1;
   let total=0;
   lanes.forEach(l=>{if(!l.widthPct||l.widthPct<=0)l.widthPct=100/n;total+=l.widthPct;});
   if(total>0&&Math.abs(total-100)>0.01)lanes.forEach(l=>l.widthPct=l.widthPct/total*100);
   return lanes.map(l=>l.widthPct);
+}
+// レーン幅・レーン名をプロジェクト毎に独立管理できるようにする仕組み（2026-08-20追加）。
+// 各プロジェクトは任意で `laneWidthPct[laneId]` （比率の数値。合計100である必要はなく最後に正規化する）
+// と、自社レーンの表示名 `selfLabel` を持てる（貴社レーンの表示名は既存の `client` フィールドを流用）。
+// 未設定の場合はレーン自体が持つ既定の widthPct / name にフォールバックする。
+function laneWidthFor(l,pid){
+  const p=pid?proj(pid):null;
+  if(p&&p.laneWidthPct&&typeof p.laneWidthPct[l.id]==='number'&&p.laneWidthPct[l.id]>0)return p.laneWidthPct[l.id];
+  return l.widthPct||0;
+}
+// 複数プロジェクトを同時表示している場合、どのプロジェクトの幅設定を「標準」として全体に適用するかを決める。
+// ルール：選択中のプロジェクトのうち、貴社レーンの幅が最も広いプロジェクトの設定（自社・貴社の比率まるごと）を採用する
+// （＝「幅は標準に最も貴社レーンが広いものに合わせる」というユーザー要望に対応）。単独プロジェクト表示時はそのまま。
+function resolveTemplateProject(lanes,allowed){
+  if(!allowed||!allowed.length)return null;
+  if(allowed.length===1)return allowed[0];
+  const clientLane=(lanes||[]).find(l=>l.kind==='client');
+  if(!clientLane)return allowed[0];
+  let best=-1,pid=allowed[0];
+  allowed.forEach(id=>{const w=laneWidthFor(clientLane,id);if(w>best){best=w;pid=id;}});
+  return pid;
+}
+// 現在の表示スコープ（単独／複数プロジェクト）に応じて、各レーンの実際の表示幅（%・合計100）を返す。
+// laneWidths()と異なり、レーンオブジェクト自体には書き込まない（プロジェクト側のlaneWidthPctを都度参照する読み取り専用の関数）。
+function effectiveLaneWidths(lanes,allowedArg){
+  const allowed=allowedArg||activeFilterProjects();
+  const pid=resolveTemplateProject(lanes,allowed);
+  const n=lanes.length||1;
+  let raw=lanes.map(l=>{const w=laneWidthFor(l,pid);return(!w||w<=0)?100/n:w;});
+  const total=raw.reduce((a,b)=>a+b,0);
+  if(total>0&&Math.abs(total-100)>0.01)raw=raw.map(w=>w/total*100);
+  return raw;
 }
 // カード内のラベルが枠に収まらない場合、まずフォントを少しずつ縮小し、それでも収まらなければ
 // カードの高さ自体を広げて必ず全文が見えるようにする（テキストが切れることは絶対に避ける）
@@ -2074,10 +2108,17 @@ function segBind(sel,cb){$$(sel+' button').forEach(b=>b.onclick=()=>{$$(sel+' bu
 function afterTaskChange(){generateSchedule();renderNav();if(current==='today')renderToday();if(current==='project')renderProject();if(current==='inbox')renderInbox();if(current==='calendar')renderCalendar();}
 
 /* ---------- PROJECT settings modal ---------- */
+function firstSelfLaneId(){const l=(state.lanes||[]).find(x=>x.kind==='self')||state.lanes[0];return l?l.id:null;}
+function firstClientLaneId(){const l=(state.lanes||[]).find(x=>x.kind==='client')||state.lanes[0];return l?l.id:null;}
 function editProject(id){
   const p=id?proj(id):null;const isNew=!p;
-  const d=p?JSON.parse(JSON.stringify(p)):{id:uid(),name:'',color:PALETTE[state.projects.length%PALETTE.length],deadline:'',status:'active',selfContained:false,client:''};
+  const d=p?JSON.parse(JSON.stringify(p)):{id:uid(),name:'',color:PALETTE[state.projects.length%PALETTE.length],deadline:'',status:'active',selfContained:false,client:'',selfLabel:'',laneWidthPct:{}};
   if(d.client==null)d.client='';
+  if(d.selfLabel==null)d.selfLabel='';
+  if(!d.laneWidthPct)d.laneWidthPct={};
+  const selfLaneId=firstSelfLaneId(),clientLaneId=firstClientLaneId();
+  const selfWVal=(selfLaneId&&typeof d.laneWidthPct[selfLaneId]==='number')?d.laneWidthPct[selfLaneId]:'';
+  const clientWVal=(clientLaneId&&typeof d.laneWidthPct[clientLaneId]==='number')?d.laneWidthPct[clientLaneId]:'';
   openModal(`
     <div class="mh"><h3>${isNew?'プロジェクトを追加':'プロジェクト設定'}</h3><button class="btn ghost" id="mClose">✕</button></div>
     <div class="mb">
@@ -2085,6 +2126,12 @@ function editProject(id){
       <div class="field"><label>カラー</label><div class="swatchpick" id="pColor"></div></div>
       <div class="field"><label>最終締切</label><input type="date" id="pDead" value="${d.deadline||''}"></div>
       <div class="field"><label>取引先名（カレンダーのレーン名・テキスト出力で「貴社」の代わりに表示・任意）</label><input type="text" id="pClient" value="${esc(d.client||'')}" placeholder="例：CURIO様"></div>
+      <div class="field"><label>自社レーン名（空欄なら既定の「自社」を表示・任意）</label><input type="text" id="pSelfLabel" value="${esc(d.selfLabel||'')}" placeholder="例：ALLIN STUDIO"></div>
+      <div class="field row">
+        <div><label>自社レーンの幅（比率・空欄で既定）</label><input type="number" id="pSelfW" min="1" step="1" value="${selfWVal}" placeholder="例：60"></div>
+        <div><label>貴社レーンの幅（比率・空欄で既定）</label><input type="number" id="pClientW" min="1" step="1" value="${clientWVal}" placeholder="例：40"></div>
+      </div>
+      <div style="color:var(--sub);font-size:12px;margin:-6px 0 12px">レーン名・レーン幅はプロジェクト毎に独立して設定できます。数値は比率のため合計が100でなくても自動的に正規化されます（例：60/40でも6/4でも同じ結果）。複数プロジェクトを同時表示している場合は、選択中のうち貴社レーンの幅が最も広いプロジェクトの設定（自社・貴社の比率、レーン名は「貴社」に統一）が全体に適用されます。</div>
       <div class="field"><label>種別</label><div class="seg" id="pSelf">
         <button data-v="no" class="${d.selfContained?'':'on'}">貴社あり（自社/貴社レーンを使う）</button>
         <button data-v="yes" class="${d.selfContained?'on':''}">自社完結</button></div></div>
@@ -2097,7 +2144,12 @@ function editProject(id){
   segBind('#pSelf',v=>d.selfContained=(v==='yes'));
   $('#mClose').onclick=$('#pCancel').onclick=closeModal;
   $('#pDel').onclick=()=>{if(isNew){closeModal();return;}if(confirm('プロジェクトを削除しますか？（このプロジェクトのタスク・予定も削除されます）')){state.projects=state.projects.filter(x=>x.id!==id);state.tasks=state.tasks.filter(t=>t.projectId!==id);generateSchedule();save();closeModal();renderNav();switchView('today');}};
-  $('#pSave').onclick=()=>{d.name=$('#pName').value.trim()||'（無題）';d.deadline=$('#pDead').value||'';d.client=$('#pClient').value.trim();
+  $('#pSave').onclick=()=>{
+    d.name=$('#pName').value.trim()||'（無題）';d.deadline=$('#pDead').value||'';d.client=$('#pClient').value.trim();d.selfLabel=$('#pSelfLabel').value.trim();
+    d.laneWidthPct=d.laneWidthPct||{};
+    const sv=$('#pSelfW').value.trim(),cv=$('#pClientW').value.trim();
+    if(selfLaneId){if(sv==='')delete d.laneWidthPct[selfLaneId];else d.laneWidthPct[selfLaneId]=Math.max(1,+sv);}
+    if(clientLaneId){if(cv==='')delete d.laneWidthPct[clientLaneId];else d.laneWidthPct[clientLaneId]=Math.max(1,+cv);}
     if(isNew)state.projects.push(d);else{const i=state.projects.findIndex(x=>x.id===id);state.projects[i]=d;}
     save();closeModal();renderNav();if(isNew)openProject(d.id);else renderProject();toast('保存しました');};
 }
@@ -2172,6 +2224,19 @@ function clientLaneLabel(){
   }
   return '貴社';
 }
+// 自社レーンの表示名：貴社レーンと同じ考え方で、単独プロジェクト表示中はそのプロジェクトの
+// 自社レーン名（設定→自社レーン名）があればそれを使い、複数プロジェクト表示中は既定の「自社」に統一する
+// （2026-08-20追加：レーン名をプロジェクト毎に独立管理できるようにする要望への対応）。
+function selfLaneLabel(){
+  const allowed=activeFilterProjects();
+  if(allowed.length===1){
+    const p=proj(allowed[0]);
+    if(p&&p.selfLabel&&p.selfLabel.trim())return p.selfLabel.trim();
+  }
+  return (state.lanes.find(l=>l.kind==='self')||{}).name||'自社';
+}
+// レーン種別（自社/貴社）に応じて、現在の表示スコープに合った表示名を返す共通ヘルパー。
+function laneDisplayName(l){return l.kind==='client'?clientLaneLabel():(l.kind==='self'?selfLaneLabel():l.name);}
 // タスク編集モーダルのレーン選択肢：そのタスクのプロジェクトが自社完結なら貴社レーンを除外する。
 function lanesForProject(pid){
   const p=pid?proj(pid):null;
@@ -2179,9 +2244,15 @@ function lanesForProject(pid){
   return state.lanes;
 }
 function laneOptionLabel(l,pid){
-  if(l.kind!=='client')return l.name;
   const p=pid?proj(pid):null;
-  if(p&&p.client&&p.client.trim())return p.client.trim();
+  if(l.kind==='client'){
+    if(p&&p.client&&p.client.trim())return p.client.trim();
+    return l.name;
+  }
+  if(l.kind==='self'){
+    if(p&&p.selfLabel&&p.selfLabel.trim())return p.selfLabel.trim();
+    return l.name;
+  }
   return l.name;
 }
 function rowHeight(){
@@ -2216,7 +2287,7 @@ function renderCalendar(){
   state.tasks.filter(t=>t.status!=='done'&&t.deadline&&t.projectId&&allowed.includes(t.projectId)).forEach(t=>{
     (dlByDate[t.deadline]=dlByDate[t.deadline]||[]).push({color:projColor(t.projectId),name:t.name});
   });
-  const laneW=laneWidths(lanes); // %表記（合計100）。ユーザーがドラッグで調整可能
+  const laneW=effectiveLaneWidths(lanes,allowed); // %表記（合計100）。プロジェクト毎に独立管理・ユーザーがドラッグで調整可能
   const laneCum=[];{let acc=0;laneW.forEach(w=>{laneCum.push(acc);acc+=w;});}
   paintMonthCols(host,cols,{bufOffset,allowed,lanes,laneW,laneCum,H,dlByDate,showSummary:(state.ui.gran==='3month'||state.ui.gran==='1month'),interactive:!READONLY});
 }
@@ -2230,7 +2301,7 @@ function paintMonthCols(host,cols,ctx){
     if(bufOffset&&(colIdx===0||colIdx===cols.length-1))mc.dataset.buf='1';
     // レーン見出し(.lh)の%幅は、行側の.lanecellsと同じく「日付欄(gut)を除いた残り幅」を基準に計算する必要がある。
     // .lanehdr自体（gut込みの全幅）を基準にしてしまうと、gutの分だけ見出しが実際のマス目より広くなり、境界線がずれる原因になっていた。
-    let laneHdr=`<div class="lanehdr"><div class="gut"></div><div class="lanehdrcells">`+lanes.map((l,li)=>`<div class="lh ${l.kind==='client'?'client':''}" style="flex:0 0 ${laneW[li]}%">${esc(l.kind==='client'?clientLaneLabel():l.name)}${l.kind==='client'?' <span style="font-size:9px;opacity:.7">〔破線枠〕</span>':''}</div>`).join('')+`</div></div>`;
+    let laneHdr=`<div class="lanehdr"><div class="gut"></div><div class="lanehdrcells">`+lanes.map((l,li)=>`<div class="lh ${l.kind==='client'?'client':''}" style="flex:0 0 ${laneW[li]}%">${esc(laneDisplayName(l))}${l.kind==='client'?' <span style="font-size:9px;opacity:.7">〔破線枠〕</span>':''}</div>`).join('')+`</div></div>`;
     let rows='';
     col.days.forEach((ds,i)=>{
       const d=parseISO(ds);const wd=d.getDay();const hol=holidayName(ds);
@@ -2376,15 +2447,22 @@ function attachLaneResizer(rz,idx,lanesList){
     ev.preventDefault();ev.stopPropagation();
     const container=rz.closest('.lanehdr');
     const rect=container.getBoundingClientRect();
-    const list=lanesList||state.lanes;
-    const w0=laneWidths(list);const wi0=w0[idx],wn0=w0[idx+1];
+    const list=lanesList||visibleLanes();
+    const allowed=activeFilterProjects();
+    // どのプロジェクトの設定として保存するか：単独表示ならそのプロジェクト、複数表示なら
+    // 「貴社レーンが最も広いプロジェクト」（＝現在の表示に採用されているテンプレート）へ書き込む。
+    const pid=resolveTemplateProject(list,allowed);
+    const w0=effectiveLaneWidths(list,allowed);const wi0=w0[idx],wn0=w0[idx+1];
+    const laneA=list[idx],laneB=list[idx+1];
     const startX=ev.clientX;
     rz.classList.add('active');
     function onMove(e){
       const deltaPct=(e.clientX-startX)/rect.width*100;
       let wi=Math.max(8,Math.min(wi0+wn0-8,wi0+deltaPct));
       let wn=wi0+wn0-wi;
-      list[idx].widthPct=wi; list[idx+1].widthPct=wn;
+      const p=pid?proj(pid):null;
+      if(p){p.laneWidthPct=p.laneWidthPct||{};p.laneWidthPct[laneA.id]=wi;p.laneWidthPct[laneB.id]=wn;}
+      else{laneA.widthPct=wi;laneB.widthPct=wn;}
       renderCalendar();
       document.querySelectorAll('.lanerz').forEach(r=>{if(+r.dataset.idx===idx)r.classList.add('active');});
     }
@@ -3116,7 +3194,7 @@ function buildCalRenderCtx(){
   state.tasks.filter(t=>t.status!=='done'&&t.deadline&&t.projectId&&allowed.includes(t.projectId)).forEach(t=>{
     (dlByDate[t.deadline]=dlByDate[t.deadline]||[]).push({color:projColor(t.projectId),name:t.name});
   });
-  const laneW=laneWidths(lanes);
+  const laneW=effectiveLaneWidths(lanes,allowed);
   const laneCum=[];{let acc=0;laneW.forEach(w=>{laneCum.push(acc);acc+=w;});}
   return {lanes,allowed,dlByDate,laneW,laneCum};
 }
@@ -3362,7 +3440,7 @@ function openPrintModal(){
 /* ---- text export of the schedule (for pasting into emails/chat to clients) ---- */
 function fmtRange(s,e){return s===e?fmtJ(s):`${fmtJ(s)}〜${fmtJ(e)}`;}
 // lane tag: 貴社系レーンでプロジェクトに取引先名があればその名前を使う
-function laneTag(card){const ln=lane(card.laneId),p=proj(card.projectId);if(ln&&ln.kind==='client'&&p&&p.client)return p.client;return ln?ln.name:'';}
+function laneTag(card){const ln=lane(card.laneId),p=proj(card.projectId);if(ln&&ln.kind==='client'&&p&&p.client)return p.client;if(ln&&ln.kind==='self'&&p&&p.selfLabel&&p.selfLabel.trim())return p.selfLabel.trim();return ln?ln.name:'';}
 function cardLine(c,withProject){
   const p=proj(c.projectId);
   const seg=[fmtRange(c.start,c.end)];
@@ -3375,26 +3453,29 @@ function cardLine(c,withProject){
 function generateScheduleText(opt){
   const ids=opt.scope==='filter'?activeFilterProjects():state.projects.map(p=>p.id);
   const projs=state.projects.filter(p=>ids.includes(p.id));
+  // 対象レーン（自社／貴社）による絞り込み。未指定時は両方を含める（従来通りの挙動）。
+  const sides=opt.sides||['self','client'];
+  const sideOk=t=>sides.includes(t.side||'self');
   const now=new Date();
   const out=[];
   out.push(`スケジュール（${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 時点）`);
   out.push('');
   if(opt.group==='date'){
-    const cards=calTasks().filter(c=>ids.includes(c.projectId)).slice().sort((a,b)=>a.start.localeCompare(b.start)||a.end.localeCompare(b.end));
+    const cards=calTasks().filter(c=>ids.includes(c.projectId)&&sideOk(c)).slice().sort((a,b)=>a.start.localeCompare(b.start)||a.end.localeCompare(b.end));
     if(!cards.length)out.push('（予定はありません）');
     cards.forEach(c=>out.push(cardLine(c,true)));
     if(opt.includeTasks){
-      const ts=state.tasks.filter(t=>ids.includes(t.projectId)&&effectiveDeadline(t)&&t.status!=='done').slice().sort((a,b)=>effectiveDeadline(a).localeCompare(effectiveDeadline(b)));
+      const ts=state.tasks.filter(t=>ids.includes(t.projectId)&&sideOk(t)&&effectiveDeadline(t)&&t.status!=='done').slice().sort((a,b)=>effectiveDeadline(a).localeCompare(effectiveDeadline(b)));
       if(ts.length){out.push('');out.push('〈締切〉');ts.forEach(t=>{const p=proj(t.projectId);out.push(`${fmtJ(effectiveDeadline(t))}｜${p?p.name:''}｜${t.name}`);});}
     }
   }else{
     projs.forEach(p=>{
       out.push(`■${p.name}${opt.showDeadline&&p.deadline?`（最終締切 ${fmtJ(p.deadline)}）`:''}`);
-      const cards=calTasks().filter(c=>c.projectId===p.id).slice().sort((a,b)=>a.start.localeCompare(b.start));
+      const cards=calTasks().filter(c=>c.projectId===p.id&&sideOk(c)).slice().sort((a,b)=>a.start.localeCompare(b.start));
       if(!cards.length)out.push('（予定なし）');
       cards.forEach(c=>out.push(cardLine(c,false)));
       if(opt.includeTasks){
-        const ts=state.tasks.filter(t=>t.projectId===p.id&&effectiveDeadline(t)&&t.status!=='done').slice().sort((a,b)=>effectiveDeadline(a).localeCompare(effectiveDeadline(b)));
+        const ts=state.tasks.filter(t=>t.projectId===p.id&&sideOk(t)&&effectiveDeadline(t)&&t.status!=='done').slice().sort((a,b)=>effectiveDeadline(a).localeCompare(effectiveDeadline(b)));
         if(ts.length){out.push('〈締切〉');ts.forEach(t=>out.push(`${fmtJ(effectiveDeadline(t))}｜${t.name}`));}
       }
       out.push('');
@@ -3403,7 +3484,7 @@ function generateScheduleText(opt){
   return out.join('\n').replace(/\n{3,}/g,'\n\n').trim()+'\n';
 }
 function openTextModal(){
-  let scope='filter',group='project',includeTasks=false,showDeadline=false;
+  let scope='filter',group='project',includeTasks=false,showDeadline=false,sides=['self','client'];
   openModal(`
     <div class="mh"><h3>テキスト出力</h3><button class="btn ghost" id="mClose">✕</button></div>
     <div class="mb">
@@ -3411,20 +3492,25 @@ function openTextModal(){
         <div class="seg" id="txScope"><button data-v="filter" class="on">表示中のプロジェクト</button><button data-v="all">全プロジェクト</button></div></div>
       <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">並び：</span>
         <div class="seg" id="txGroup"><button data-v="project" class="on">プロジェクト別</button><button data-v="date">日付順</button></div></div>
+      <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">レーン：</span>
+        <label style="font-weight:600;color:var(--ink);margin-right:14px"><input type="checkbox" id="txSideSelf" checked style="margin-right:6px">自社</label>
+        <label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="txSideClient" checked style="margin-right:6px">貴社</label></div>
       <div class="field" style="display:flex;gap:20px;flex-wrap:wrap">
         <label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="txTasks" style="margin-right:6px">タスクの締切も含める</label>
         <label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="txDead" style="margin-right:6px">プロジェクトの最終締切を表示</label>
       </div>
-      <div style="font-size:12px;color:var(--sub);margin:-4px 0 12px">「貴社」の表示名は、各プロジェクトの設定「取引先名」で変更できます（例：CURIO様）。</div>
+      <div style="font-size:12px;color:var(--sub);margin:-4px 0 12px">「貴社」の表示名は、各プロジェクトの設定「取引先名」で変更できます（例：CURIO様）。レーンの自社／貴社チェックを外すと、そのレーンの予定・締切を出力から除外できます（例：貴社にだけ送る用に自社の社内予定を除外）。</div>
       <div class="field"><label>プレビュー（そのままコピーして送れます）</label>
         <textarea id="txOut" readonly style="min-height:300px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;white-space:pre;overflow:auto"></textarea></div>
     </div>
     <div class="mf"><span style="font-size:12px;color:var(--sub)" id="txMsg"></span>
       <div style="display:flex;gap:8px"><button class="btn" id="txDl">.txt保存</button><button class="btn pri" id="txCopy">コピー</button></div></div>`,'wide');
-  const render=()=>{$('#txOut').value=generateScheduleText({scope,group,includeTasks,showDeadline});};
+  const render=()=>{$('#txOut').value=generateScheduleText({scope,group,includeTasks,showDeadline,sides});};
+  const updSides=()=>{sides=[];if($('#txSideSelf').checked)sides.push('self');if($('#txSideClient').checked)sides.push('client');render();};
   segBind('#txScope',v=>{scope=v;render();});segBind('#txGroup',v=>{group=v;render();});
   $('#txTasks').onchange=e=>{includeTasks=e.target.checked;render();};
   $('#txDead').onchange=e=>{showDeadline=e.target.checked;render();};
+  $('#txSideSelf').onchange=updSides;$('#txSideClient').onchange=updSides;
   $('#mClose').onclick=closeModal;
   $('#txCopy').onclick=async()=>{
     const t=$('#txOut').value;
