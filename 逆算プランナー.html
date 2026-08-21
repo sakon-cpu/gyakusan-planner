@@ -433,6 +433,8 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   --accent:#2f6df6; --accent-soft:#e8f0ff; --danger:#e5484d; --warn:#f59e0b;
   --good:#12a150; --shadow:0 1px 3px rgba(20,25,40,.08),0 6px 24px rgba(20,25,40,.06);
   --radius:12px; --nav:232px;
+  /* カレンダーの罫線の濃さ（3段階・設定で変更可、画面・PDF出力の両方に反映）。既定値は従来通りの薄さ。 */
+  --cal-line:#eef0f4; --cal-line-strong:#e6e8ee;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -676,22 +678,22 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .months.g-3month::-webkit-scrollbar{display:none}
 .months.g-3month .monthcol{scroll-snap-align:start;flex:0 0 calc((100% - 32px)/3)}
 .monthcol{flex:1 1 0;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
-.monthcol .mhead{background:#f0f2f7;padding:8px 10px;font-weight:800;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}
+.monthcol .mhead{background:#f0f2f7;padding:8px 10px;font-weight:800;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--cal-line-strong)}
 .monthcol .mhead .mo{color:var(--sub);font-weight:600;font-size:11px}
-.lanehdr{display:flex;border-bottom:1px solid var(--line);background:#fafbfe}
-.lanehdr .gut{flex:0 0 48px;border-right:1px solid var(--line)}
+.lanehdr{display:flex;border-bottom:1px solid var(--cal-line-strong);background:#fafbfe}
+.lanehdr .gut{flex:0 0 48px;border-right:1px solid var(--cal-line-strong)}
 .lanehdrcells{flex:1 1 0;display:flex;min-width:0}
-.lanehdr .lh{flex:1 1 0;text-align:center;font-size:11px;font-weight:700;color:var(--sub);padding:5px 2px;border-right:1px dashed var(--line)}
+.lanehdr .lh{flex:1 1 0;text-align:center;font-size:11px;font-weight:700;color:var(--sub);padding:5px 2px;border-right:1px dashed var(--cal-line)}
 .lanehdr .lh:last-child{border-right:0}
 
 .daygrid{position:relative}
-.dayrow{display:flex;border-bottom:1px solid #eef0f4;position:relative}
+.dayrow{display:flex;border-bottom:1px solid var(--cal-line);position:relative}
 .dayrow.wknd{background:#fafbfd}
 .dayrow.sat .dnum,.dayrow.sat .dwk{color:#2563eb}
 .dayrow.sun .dnum,.dayrow.sun .dwk{color:var(--danger)}
 .dayrow.hol .dnum,.dayrow.hol .dwk{color:var(--danger)} /* 祝日は土曜と重なっても赤優先（後勝ち） */
 .dayrow.today{background:var(--accent-soft)}
-.dayrow .gut{flex:0 0 48px;border-right:1px solid var(--line);padding:2px 5px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;overflow:hidden}
+.dayrow .gut{flex:0 0 48px;border-right:1px solid var(--cal-line-strong);padding:2px 5px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;overflow:hidden}
 .dayrow .dtop{display:flex;align-items:baseline;gap:4px;line-height:1}
 .dayrow .dnum{font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
 .dayrow .dwk{font-size:10px;color:var(--sub)}
@@ -700,7 +702,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .nowline::before{content:'';position:absolute;left:-4px;top:-4px;width:7px;height:7px;border-radius:50%;background:var(--danger)}
 .dayrow .holname{font-size:8.5px;color:var(--danger);line-height:1.05;margin-top:1px;max-width:42px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .dayrow .lanecells{flex:1 1 0;display:flex}
-.dayrow .lc{flex:1 1 0;border-right:1px dashed #eef0f4;min-height:100%}
+.dayrow .lc{flex:1 1 0;border-right:1px dashed var(--cal-line);min-height:100%}
 .dayrow .lc:last-child{border-right:0}
 .dayrow .lc.hot{background:rgba(47,109,246,.16);box-shadow:inset 0 0 0 2px var(--accent)}
 /* project color stays unified; self vs client differentiated by FRAME */
@@ -844,7 +846,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
   .dayrow .dwk{font-size:11px}
   .calcard .lbl{font-size:12px}
   .calcard .sm{font-size:10.5px}
-  .dayrow{border-bottom:1px solid #e2e5ec}
+  .dayrow{border-bottom:1px solid var(--cal-line)}
   .monthcol{border:1px solid #cfd3dc}
   .gchip{display:none!important}
 }
@@ -1000,6 +1002,7 @@ body.shared #main{padding-top:34px}
         </div>
         <div class="filterchips" id="calFilters"></div>
         <button class="btn sm" id="calDurToggle">📏 日数表示</button>
+        <button class="btn sm" id="calGridToggle">▦ 罫線:薄い</button>
         <div class="lanetools" id="laneTools"></div>
       </div>
       <div class="unschedTray" id="unschedTray">
@@ -1233,6 +1236,7 @@ function migrate(){
   if(!state.google)state.google={clientId:'',busyCalendars:[],useForPlanning:true};
   if(!state.blocks)state.blocks=[];
   if(state.settings&&state.settings.dailyCap==null)state.settings.dailyCap=180;
+  if(state.settings&&state.settings.gridDarkness==null)state.settings.gridDarkness='light';
   if(state.ui&&state.ui.todayFilter==null)state.ui.todayFilter='all';
   if(state.ui&&state.ui.todoKindFilter==null)state.ui.todoKindFilter='all';
   if(state.ui&&state.ui.printShowDuration==null)state.ui.printShowDuration=true;
@@ -2259,9 +2263,32 @@ function rowHeight(){
   const g=state.ui.gran;
   return {'3month':22,'1month':30,'2week':56,'1week':84,'1day':60}[g]||24;
 }
+// カレンダーの罫線の濃さ（3段階）。CSS変数（--cal-line/--cal-line-strong）を書き換えるだけの実装のため、
+// 画面表示だけでなくPDF出力（html2canvasによるオフスクリーンDOMのラスタライズ）にも自動的に反映される
+// （印刷用に別々の設定を持たせているわけではなく、1つの設定を両方の出力で共有する仕様）。
+const GRID_LEVELS={
+  light:{line:'#eef0f4',strong:'#e6e8ee',label:'薄い'},
+  normal:{line:'#d7dce6',strong:'#b9c0d1',label:'標準'},
+  dark:{line:'#aab1c4',strong:'#7c8497',label:'濃い'}
+};
+function applyGridDarkness(){
+  const key=(state.settings&&state.settings.gridDarkness)||'light';
+  const lv=GRID_LEVELS[key]||GRID_LEVELS.light;
+  document.documentElement.style.setProperty('--cal-line',lv.line);
+  document.documentElement.style.setProperty('--cal-line-strong',lv.strong);
+  const btn=$('#calGridToggle');if(btn)btn.textContent='▦ 罫線:'+lv.label;
+}
+function cycleGridDarkness(){
+  const order=['light','normal','dark'];
+  const cur=(state.settings&&state.settings.gridDarkness)||'light';
+  const next=order[(order.indexOf(cur)+1)%order.length];
+  if(state.settings)state.settings.gridDarkness=next;
+  save();applyGridDarkness();
+}
 function renderCalendar(){
   renderCalFilters();renderLaneTools();
   if(!READONLY)renderUnscheduled();
+  applyGridDarkness();
   const durBtn=$('#calDurToggle');
   if(durBtn)durBtn.classList.toggle('on',state.ui.showDurWM!==false);
   let cols=granColumns();
@@ -3569,7 +3596,7 @@ function buildShareSnapshot(ids){
   const projs=state.projects.filter(p=>ids.includes(p.id));
   const tasks=state.tasks.filter(t=>ids.includes(t.projectId));
   return {v:1,gen:todayISO(),title:projs.length===1?projs[0].name:'スケジュール',
-    projects:projs,lanes:state.lanes,tasks,holidays:state.settings.customHolidays||[]};
+    projects:projs,lanes:state.lanes,tasks,holidays:state.settings.customHolidays||[],gridDarkness:state.settings.gridDarkness||'light'};
 }
 function shareURL(kind,ids){
   const data=b64urlEncode(JSON.stringify(buildShareSnapshot(ids)));
@@ -3615,7 +3642,7 @@ function tryEnterShare(){
   if(!data||!Array.isArray(data.projects))return null;
   READONLY=true;
   const now=new Date();
-  state={settings:{workStart:'10:00',workEnd:'22:00',useWeekend:false,customHolidays:data.holidays||[],dailyCap:180},
+  state={settings:{workStart:'10:00',workEnd:'22:00',useWeekend:false,customHolidays:data.holidays||[],dailyCap:180,gridDarkness:data.gridDarkness||'light'},
     google:{clientId:'',busyCalendars:[],useForPlanning:false},blocks:[],
     lanes:data.lanes||[],projects:data.projects||[],tasks:data.tasks||[],
     ui:{gran:kind==='quick'?'1month':'3month',anchor:iso(new Date(now.getFullYear(),now.getMonth(),1)),filter:'all',calDay:todayISO()}};
@@ -3716,13 +3743,14 @@ async function initFirebase(){
   }catch(e){console.error('Firebase init failed',e);CLOUD.fail=true;return false;}
 }
 function cloudSubset(){return {projects:state.projects,lanes:state.lanes,tasks:state.tasks,
-  settings:{customHolidays:state.settings.customHolidays,workStart:state.settings.workStart,workEnd:state.settings.workEnd,useWeekend:state.settings.useWeekend,dailyCap:state.settings.dailyCap}};}
+  settings:{customHolidays:state.settings.customHolidays,workStart:state.settings.workStart,workEnd:state.settings.workEnd,useWeekend:state.settings.useWeekend,dailyCap:state.settings.dailyCap,gridDarkness:state.settings.gridDarkness}};}
 function applyCloudData(data){
   if(!data)return;
   CLOUD.applying=true;
   state.projects=data.projects||[]; state.lanes=data.lanes||[]; state.tasks=data.tasks||[];
   if(data.settings){Object.assign(state.settings,data.settings);}
   migrate();
+  applyGridDarkness();
   CLOUD.applying=false;
   refreshViews();
 }
@@ -3833,6 +3861,7 @@ function wire(){
   $('#calNext').onclick=()=>calStep(1);
   $('#calToday').onclick=()=>{const t=new Date();state.ui.anchor=iso(new Date(t.getFullYear(),t.getMonth(),1));state.ui.calDay=todayISO();save();renderCalendar();};
   $('#calDurToggle').onclick=()=>{state.ui.showDurWM=state.ui.showDurWM===false;save();renderCalendar();};
+  $('#calGridToggle').onclick=cycleGridDarkness;
   $$('#granSwitch button').forEach(b=>b.onclick=()=>{state.ui.gran=b.dataset.g;save();renderCalendar();});
   // settings
   $('#setWorkStart').onchange=e=>{state.settings.workStart=e.target.value;save();generateSchedule();};
@@ -3912,12 +3941,14 @@ const _share=_wlive?null:tryEnterShare();
 if(_wlive){
   bootShareLive(_wlive);
 }else if(_share){
+  applyGridDarkness();
   if(_share.kind==='quick'){ enterQuickView(_share.data); }
   else { document.body.classList.add('shared');$('#shareBanner').style.display='block';CLOUD.shareView='full';wire();renderNav();switchView('calendar'); }
 }else{
   load();
   ensureSchedule();
   snapshotInit();
+  applyGridDarkness();
   wire();
   renderNav();
   switchView('today');
