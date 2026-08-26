@@ -772,6 +772,21 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .printPage.hidedurwm .durwm{display:none}
 .printPage{background:#fff}
 .printPage .months{margin-bottom:10px}
+/* PDF出力専用の「罫線・塗りつぶしの濃さ」3段階（2026-08-20追加）。画面表示側の--cal-line/--cal-line-strongとは
+   独立して、印刷/PDF出力の時だけ強められるようにするための上書き。既定（lv-light）は従来と同じ薄さ。 */
+.printPage.lv-light{--cal-line:#eef0f4;--cal-line-strong:#e6e8ee}
+.printPage.lv-normal{--cal-line:#c7cddb;--cal-line-strong:#9aa1b5}
+.printPage.lv-dark{--cal-line:#8b93a8;--cal-line-strong:#565e73}
+.printPage.lv-normal .monthcol{border-color:#9aa1b5}
+.printPage.lv-dark .monthcol{border-color:#565e73}
+.printPage.lv-normal .dayrow.wknd{background:#eceef4}
+.printPage.lv-dark .dayrow.wknd{background:#dfe2ec}
+.printPage.lv-normal .monthcol .mhead,.printPage.lv-normal .lanehdr{background:#e6e9f1}
+.printPage.lv-dark .monthcol .mhead,.printPage.lv-dark .lanehdr{background:#d8dce8}
+.printPage.lv-normal .calcard{filter:saturate(1.12) contrast(1.08)}
+.printPage.lv-dark .calcard{filter:saturate(1.25) contrast(1.16)}
+.printPage.lv-normal .calcard.outline{border-width:2.5px!important}
+.printPage.lv-dark .calcard.outline{border-width:3px!important}
 .pp-stepper{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:9px;overflow:hidden}
 .pp-stepper button{width:30px;height:30px;border:0;background:#fff;font-weight:800;font-size:15px;color:var(--ink);cursor:pointer}
 .pp-stepper button:hover{background:#f0f2f7}
@@ -1240,6 +1255,7 @@ function migrate(){
   if(state.ui&&state.ui.todayFilter==null)state.ui.todayFilter='all';
   if(state.ui&&state.ui.todoKindFilter==null)state.ui.todoKindFilter='all';
   if(state.ui&&state.ui.printShowDuration==null)state.ui.printShowDuration=true;
+  if(state.ui&&state.ui.printDarkness==null)state.ui.printDarkness='light';
   if(state.ui&&state.ui.showDurWM==null)state.ui.showDurWM=true;
   (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||l.name.includes('貴社')||/client/i.test(l.name)))?'client':'self';});
   (state.projects||[]).forEach(p=>{if(p.client==null)p.client='';});
@@ -3263,6 +3279,7 @@ function buildPrintPageEl(rowsOfMonths,ctx,opts){
   wrap.style.cssText='position:fixed;left:-99999px;top:0;background:#fff;padding:8px;box-sizing:border-box';
   wrap.style.width=Math.round(opts.availWpx)+'px';
   wrap.classList.toggle('hidedurwm',opts.showDur===false);
+  wrap.classList.add('lv-'+(['light','normal','dark'].includes(opts.darkness)?opts.darkness:'light'));
   document.body.appendChild(wrap); // ← カードを組み立てる前に必ず接続する
   wrap.appendChild(buildPrintHeadEl(opts.title,pageRangeLabel(rowsOfMonths)));
   rowsOfMonths.forEach(rowYMs=>{
@@ -3293,7 +3310,7 @@ async function exportRangePDF(pagesMonths,cfg){
   const doc=new jsPDF({orientation,unit:'mm',format:[p.w,p.h]});
   const margin=PMARGIN;
   for(let i=0;i<pagesMonths.length;i++){
-    const el=buildPrintPageEl(pagesMonths[i],ctx,{title:cfg.title,showDur:cfg.showDur,availWpx:availW,H,showSummary,monthsPerRow:cfg.monthsPerRow});
+    const el=buildPrintPageEl(pagesMonths[i],ctx,{title:cfg.title,showDur:cfg.showDur,availWpx:availW,H,showSummary,monthsPerRow:cfg.monthsPerRow,darkness:cfg.darkness});
     const canvas=await rasterizePage(el);
     const cw=canvas.width,ch=canvas.height;
     let drawW=p.w-2*margin, drawH=drawW*ch/cw;
@@ -3310,6 +3327,7 @@ function openPrintModal(){
   let sy=initRange.sy,sm=initRange.sm,ey=initRange.ey,em=initRange.em;
   let title=defaultPrintTitle();
   let showDur=state.ui.printShowDuration!==false;
+  let darkness=['light','normal','dark'].includes(state.ui.printDarkness)?state.ui.printDarkness:'light';
   const totalMonthsNow=()=>monthRangeList(sy,sm,ey,em).length;
   const rec=recommendLayout(totalMonthsNow());
   let paper=rec.paper, monthsPerRow=rec.monthsPerRow, rowsPerPage=rec.rowsPerPage;
@@ -3335,6 +3353,8 @@ function openPrintModal(){
         <div class="pp-stepper" id="prRows"><button data-d="-1">−</button><span id="prRowsV">1</span><button data-d="1">＋</button></div>
       </div>
       <div class="field"><label style="font-weight:600;color:var(--ink)"><input type="checkbox" id="prDur" style="margin-right:6px">作業日数の透かし（7日以上の予定）をPDFに含める</label></div>
+      <div class="pp-row"><span style="font-size:12px;font-weight:700;color:var(--sub)">罫線・塗りつぶしの濃さ：</span>
+        <div class="seg" id="prDarkness"><button data-v="light" class="on">薄い</button><button data-v="normal">標準</button><button data-v="dark">濃い</button></div></div>
       <div class="field"><label>ページ構成</label><div class="pp-breakdown" id="prBreak"></div></div>
       <div class="field"><label>プレビュー（実際にPDFへ出力される内容と同じです）</label>
         <div class="previewwrap" style="flex-direction:column;gap:8px">
@@ -3373,7 +3393,9 @@ function openPrintModal(){
   $('#prTo').onchange=e=>{const[y,m]=e.target.value.split('-').map(Number);ey=y;em=m-1;drawPaperBtns();update();};
   $('#prTitle').oninput=e=>{title=e.target.value;update();};
   $('#prDur').checked=showDur;
-  $('#prDur').onchange=e=>{showDur=e.target.checked;state.ui.printShowDuration=showDur;save();};
+  $('#prDur').onchange=e=>{showDur=e.target.checked;state.ui.printShowDuration=showDur;save();schedulePreview();};
+  $$('#prDarkness button').forEach(b=>b.classList.toggle('on',b.dataset.v===darkness));
+  segBind('#prDarkness',v=>{darkness=v;state.ui.printDarkness=darkness;save();schedulePreview();});
   // ---- プレビュー：実際のPDF生成と全く同じ関数（buildPrintPageEl / rasterizePage）を使って
   // 各ページをラスタライズし、画像として確認できるようにする（＝プレビューと実際の出力に差が出ない）。
   // 生成は多少重いので、操作のたびに毎回全ページぶん作り直すのではなく300ms待ってから1回だけ実行し、
@@ -3414,7 +3436,7 @@ function openPrintModal(){
       const urls=[];
       for(let i=0;i<pages.length;i++){
         if(myToken!==previewToken||prModalClosed)return; // 途中で設定が変わった／モーダルが閉じた＝この結果は使わない
-        const el=buildPrintPageEl(pages[i],ctx,{title,showDur,availWpx:availW,H,showSummary,monthsPerRow});
+        const el=buildPrintPageEl(pages[i],ctx,{title,showDur,availWpx:availW,H,showSummary,monthsPerRow,darkness});
         const canvas=await rasterizePage(el,1); // プレビューは軽量化のため等倍
         urls.push(canvas.toDataURL('image/jpeg',0.85));
       }
@@ -3437,7 +3459,7 @@ function openPrintModal(){
     busy=true;const goBtn=$('#prGo');const orig=goBtn.textContent;goBtn.textContent='生成中…';goBtn.disabled=true;
     try{
       const pages=paginateMonths(months,monthsPerRow,rowsPerPage);
-      await exportRangePDF(pages,{paper,title,showDur,monthsPerRow,rowsPerPage});
+      await exportRangePDF(pages,{paper,title,showDur,monthsPerRow,rowsPerPage,darkness});
       prModalClosed=true;clearTimeout(previewDebounce);previewToken++;
       closeModal();
       toast('PDFを保存しました');
