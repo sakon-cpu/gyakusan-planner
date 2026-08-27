@@ -672,11 +672,11 @@ input,select,textarea{font-family:inherit;font-size:14px}
 /* calendar canvas */
 .calwrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;overflow:auto}
 .months{display:flex;gap:16px;align-items:flex-start}
-/* 3ヶ月表示：前後1ヶ月ずつバッファ列を持たせ、トラックパッドの二本指スワイプでシームレスに横スクロール＋
-   スクロールスナップで「ある程度動いたら適正な表示位置に切り替わる」マグネット感を出す */
-.months.g-3month{overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
-.months.g-3month::-webkit-scrollbar{display:none}
-.months.g-3month .monthcol{scroll-snap-align:start;scroll-snap-stop:always;flex:0 0 calc((100% - 32px)/3)}
+/* 3ヶ月表示：横スクロール・マグネットは使わず、常に3ヶ月ぶんが画面幅いっぱいに収まる固定グリッド
+   （2026-08-27：残像・ブレの原因になっていたトラックパッド横スクロール＋スナップは廃止し、
+   前後月への移動は「‹ ›」ボタンのみで行う仕様に変更） */
+.months.g-3month{overflow-x:visible}
+.months.g-3month .monthcol{flex:1 1 0}
 .monthcol{flex:1 1 0;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
 .monthcol .mhead{background:#f0f2f7;padding:8px 10px;font-weight:800;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--cal-line-strong)}
 .monthcol .mhead .mo{color:var(--sub);font-weight:600;font-size:11px}
@@ -756,6 +756,13 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .months.g-3month .calcard .lbl{font-size:9.5px;line-height:1.1}
 .months.g-3month .calcard .sm{font-size:8.5px;line-height:1.05}
 .months.g-1month .calcard .lbl{font-size:11px;line-height:1.15}
+/* 画面幅に応じた表示密度（sizeTier）：横幅に余裕がある場合はカード文字を少し大きくして間延びを防ぐ */
+.months.g-3month.tier-md .calcard{padding:3px 6px}
+.months.g-3month.tier-md .calcard .lbl{font-size:10.5px}
+.months.g-3month.tier-md .calcard .sm{font-size:9.5px}
+.months.g-3month.tier-lg .calcard{padding:4px 7px}
+.months.g-3month.tier-lg .calcard .lbl{font-size:12px}
+.months.g-3month.tier-lg .calcard .sm{font-size:10.5px}
 /* dense 3-month: keep the date gutter to a single clean line (holiday still shown by red number) */
 .months.g-3month .dayrow .holname{display:none}
 .dayrow .gut{overflow:hidden;flex-wrap:nowrap}
@@ -2275,9 +2282,20 @@ function laneOptionLabel(l,pid){
   }
   return l.name;
 }
+// 画面幅（＝モニターの解像度）に応じて3段階（フルHD相当/中間/4K相当）で表示密度を自動調整する。
+// 2026-08-27追加：フルHDでは今まで通りコンパクトに、4Kなど横幅に余裕がある環境では行の高さと
+// カード内フォントを少し大きくして、余白ばかり広がって間延びして見えるのを防ぐ。
+function sizeTier(){
+  const w=window.innerWidth||1280;
+  if(w>=2400)return 'lg'; // 4K相当
+  if(w>=1700)return 'md'; // 中間・フルHDでウィンドウ最大化時など
+  return 'sm'; // フルHD以下・ウィンドウが狭い場合
+}
 function rowHeight(){
   const g=state.ui.gran;
-  return {'3month':22,'1month':30,'2week':56,'1week':84,'1day':60}[g]||24;
+  const base={'3month':22,'1month':30,'2week':56,'1week':84,'1day':60}[g]||24;
+  const scale={sm:1,md:1.12,lg:1.25}[sizeTier()];
+  return Math.round(base*scale);
 }
 // カレンダーの罫線の濃さ（3段階）。CSS変数（--cal-line/--cal-line-strong）を書き換えるだけの実装のため、
 // 画面表示だけでなくPDF出力（html2canvasによるオフスクリーンDOMのラスタライズ）にも自動的に反映される
@@ -2308,18 +2326,11 @@ function renderCalendar(){
   const durBtn=$('#calDurToggle');
   if(durBtn)durBtn.classList.toggle('on',state.ui.showDurWM!==false);
   let cols=granColumns();
-  // 3ヶ月表示：トラックパッドの二本指スワイプでシームレスに月をまたげるよう、前後に1ヶ月ずつ
-  // 見えないバッファ列を足しておく（印刷時は data-buf="1" の列をCSSで非表示にして3ヶ月だけ出す）。
-  let bufOffset=0;
-  if(state.ui.gran==='3month'&&!READONLY){
-    const a=parseISO(state.ui.anchor);
-    const beforeM=new Date(a.getFullYear(),a.getMonth()-1,1), afterM=new Date(a.getFullYear(),a.getMonth()+3,1);
-    cols=[monthCol(beforeM.getFullYear(),beforeM.getMonth()),...cols,monthCol(afterM.getFullYear(),afterM.getMonth())];
-    bufOffset=1;
-  }
+  // 2026-08-27：横スクロール＋マグネットのバッファ列方式は廃止。常に実際の3ヶ月だけを描画する。
+  const bufOffset=0;
   const label=state.ui.gran==='3month'?`${cols[bufOffset].title} 〜 ${cols[bufOffset+2].title}`:(cols[0].title);
   $('#calRange').textContent=label;
-  const host=$('#calMonths');host.className='months g-'+state.ui.gran;host.innerHTML='';
+  const host=$('#calMonths');host.className='months g-'+state.ui.gran+' tier-'+sizeTier();host.innerHTML='';
   $$('#granSwitch button').forEach(b=>b.classList.toggle('on',b.dataset.g===state.ui.gran));
   if(state.ui.gran==='1day'){renderDayView(host,cols[0]);return;}
   const lanes=visibleLanes();
@@ -2458,36 +2469,11 @@ function paintMonthCols(host,cols,ctx){
         attachLaneResizer(rz,li,lanes);
       });
     });
-    if(bufOffset)initSeamlessMonthScroll(host);
   }
 }
-// 3ヶ月表示：前後1ヶ月ずつのバッファ列を足した状態で、常に「バッファ1ヶ月＋本来の3ヶ月」の
-// 真ん中（=本来の3ヶ月）が見えるようスクロール位置を初期化し、二本指スワイプが1ヶ月分snapで
-// 動いたらstate.ui.anchorを更新して静かに再センタリングする（＝実質、無限にシームレススクロールできる）。
-function initSeamlessMonthScroll(host){
-  const cols=[...host.querySelectorAll('.monthcol')];
-  if(cols.length<2)return;
-  const step=cols[1].getBoundingClientRect().left-cols[0].getBoundingClientRect().left;
-  if(!step||step<=0)return;
-  host.scrollLeft=step; // バッファ1列ぶん右にずらし、本来の3ヶ月がちょうど画面いっぱいに来るようにする
-  let t=null;
-  host.onscroll=()=>{
-    clearTimeout(t);
-    t=setTimeout(()=>{
-      const idx=Math.round(host.scrollLeft/step);
-      let dir=idx-1; // -1=1ヶ月前へ、0=そのまま、+1=1ヶ月先へ
-      // 高速フリング等でscroll-snapが1列を飛ばした場合でも、月の飛び・日付の欠落を防ぐため
-      // 1回の確定では必ず1ヶ月分だけ動かす（複数ヶ月分を一気に飛ばさない）
-      if(dir>1)dir=1; else if(dir<-1)dir=-1;
-      if(dir!==0){
-        const a=parseISO(state.ui.anchor);a.setMonth(a.getMonth()+dir);
-        state.ui.anchor=iso(new Date(a.getFullYear(),a.getMonth(),1));
-        save();renderCalendar();
-        if(gTokenValid())gFetchForCurrentView();
-      }
-    },160);
-  };
-}
+// 2026-08-27：トラックパッド横スクロール＋マグネットスナップ機能は、環境によって残像・ブレなど
+// 挙動が不安定になるため廃止した。3ヶ月表示は常に実際の3ヶ月だけを固定グリッドで表示し、
+// 前後月への移動は画面上部の「‹ ›」ボタン（calStep）のみで行う。
 function attachLaneResizer(rz,idx,lanesList){
   rz.addEventListener('pointerdown',ev=>{
     ev.preventDefault();ev.stopPropagation();
@@ -3866,6 +3852,17 @@ function wire(){
   attachReorder($('#todoRemind'),'remindOrder');
   attachReorder($('#todoDoneList'),'doneOrder');
   window.addEventListener('resize',()=>{if(current==='today')applyTodoLayout();});
+  // ウィンドウ幅（モニター解像度・ウィンドウのリサイズ／別モニターへの移動）に応じてカレンダーの
+  // 表示密度（sizeTier）を自動で切り替える。頻繁に発火するのでdebounceして再描画は最小限に留める。
+  let calResizeT=null;
+  window.addEventListener('resize',()=>{
+    if(current!=='calendar')return;
+    clearTimeout(calResizeT);
+    calResizeT=setTimeout(()=>{
+      const host=$('#calMonths');
+      if(host&&!host.className.includes('tier-'+sizeTier()))renderCalendar();
+    },200);
+  });
   $$('#nav .navbtn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
   $('#navAddProj').onclick=()=>editProject(null);
   $('#navGoogle').onclick=async()=>{if(gTokenValid()){switchView('settings');}else{await gConnect(true);updateGoogleNav();}};
