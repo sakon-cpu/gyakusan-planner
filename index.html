@@ -676,7 +676,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
    スクロールスナップで「ある程度動いたら適正な表示位置に切り替わる」マグネット感を出す */
 .months.g-3month{overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
 .months.g-3month::-webkit-scrollbar{display:none}
-.months.g-3month .monthcol{scroll-snap-align:start;flex:0 0 calc((100% - 32px)/3)}
+.months.g-3month .monthcol{scroll-snap-align:start;scroll-snap-stop:always;flex:0 0 calc((100% - 32px)/3)}
 .monthcol{flex:1 1 0;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
 .monthcol .mhead{background:#f0f2f7;padding:8px 10px;font-weight:800;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--cal-line-strong)}
 .monthcol .mhead .mo{color:var(--sub);font-weight:600;font-size:11px}
@@ -2475,7 +2475,10 @@ function initSeamlessMonthScroll(host){
     clearTimeout(t);
     t=setTimeout(()=>{
       const idx=Math.round(host.scrollLeft/step);
-      const dir=idx-1; // -1=1ヶ月前へ、0=そのまま、+1=1ヶ月先へ
+      let dir=idx-1; // -1=1ヶ月前へ、0=そのまま、+1=1ヶ月先へ
+      // 高速フリング等でscroll-snapが1列を飛ばした場合でも、月の飛び・日付の欠落を防ぐため
+      // 1回の確定では必ず1ヶ月分だけ動かす（複数ヶ月分を一気に飛ばさない）
+      if(dir>1)dir=1; else if(dir<-1)dir=-1;
       if(dir!==0){
         const a=parseISO(state.ui.anchor);a.setMonth(a.getMonth()+dir);
         state.ui.anchor=iso(new Date(a.getFullYear(),a.getMonth(),1));
@@ -3387,7 +3390,10 @@ function openPrintModal(){
   $('#prPreset1').onclick=()=>applyLayout({paper:'a4p',monthsPerRow:1,rowsPerPage:1});
   $('#prPreset3').onclick=()=>applyLayout({paper:'a4l',monthsPerRow:3,rowsPerPage:1});
   $('#prPresetOnePage').onclick=()=>{const n=totalMonthsNow();applyLayout({paper:'a3p',monthsPerRow:Math.max(1,Math.ceil(n/2)),rowsPerPage:2});};
-  $('#prCols').querySelectorAll('button').forEach(b=>b.onclick=()=>{monthsPerRow=Math.max(1,Math.min(6,monthsPerRow+parseInt(b.dataset.d,10)));update();});
+  // ★1ページの月数は最大3まで：H(行高)は画面と同じく「1ヶ月表示(H=30)」「3ヶ月表示相当(H=22)」の
+  // 2段階の密度しか持たないため、4以上にすると同じ小さいフォントのまま列だけがどんどん狭くなり、
+  // 文字が潰れたり枠が窮屈になったりする原因になっていた（2026-08-27修正）。
+  $('#prCols').querySelectorAll('button').forEach(b=>b.onclick=()=>{monthsPerRow=Math.max(1,Math.min(3,monthsPerRow+parseInt(b.dataset.d,10)));update();});
   $('#prRows').querySelectorAll('button').forEach(b=>b.onclick=()=>{rowsPerPage=Math.max(1,Math.min(3,rowsPerPage+parseInt(b.dataset.d,10)));update();});
   $('#prFrom').onchange=e=>{const[y,m]=e.target.value.split('-').map(Number);sy=y;sm=m-1;drawPaperBtns();update();};
   $('#prTo').onchange=e=>{const[y,m]=e.target.value.split('-').map(Number);ey=y;em=m-1;drawPaperBtns();update();};
