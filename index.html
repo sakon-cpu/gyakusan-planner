@@ -2328,12 +2328,12 @@ function renderCalendar(){
   const durBtn=$('#calDurToggle');
   if(durBtn)durBtn.classList.toggle('on',state.ui.showDurWM!==false);
   let cols=granColumns();
-  // 3ヶ月表示：トラックパッドでスライドできるよう前後に2ヶ月ずつ見えないバッファ列を足す
-  // （印刷時は data-buf="1" の列をCSSで非表示にして3ヶ月だけ出す）。CSSのscroll-snapは使わず、
-  // バッファの端までスクロールし切った瞬間だけJSで静かに1ヶ月ずらす（2026-08-27）。
-  // バッファを2ヶ月ぶんに広げているのは、月をまたぐたびに毎回DOM再構築が走ると体感がカクつくため、
-  // 少し多めに余裕を持たせて再構築の頻度そのものを減らすため（2026-08-28）。
-  const BUF=2;
+  // 3ヶ月表示：トラックパッドでスライドできるよう前後にまとめて多めの月ぶん見えないバッファ列を
+  // 足しておく（印刷時は data-buf="1" の列をCSSで非表示にして3ヶ月だけ出す）。CSSのscroll-snapは
+  // 使わず、スクロール中はDOM再構築を一切せずラベル表示だけを軽量に追従させ、
+  // 実際にバッファの端まで到達した時だけ改めて広い範囲を作り直す（2026-08-28：
+  // 「1年分まとめて読み込んでおけば毎回作り直さずに済む」というアイデアを反映）。
+  const BUF=6; // 前後6ヶ月＝実質1年分をあらかじめ用意しておく
   let bufOffset=0;
   if(state.ui.gran==='3month'&&!READONLY){
     const a=parseISO(state.ui.anchor);
@@ -2425,9 +2425,25 @@ function paintMonthCols(host,cols,ctx){
         columns[placed].push({start:c.start,end:c.end});
         subOf[c.id]=placed;
       });
-      const K=Math.max(1,columns.length);
+      // ある期間だけ重なりが多いカード群のせいで、その月・レーン全体の他の（重なっていない）カード
+      // まで一律に狭い幅へ押し込められていた不具合を修正（2026-08-28）。列数(K)は月全体で共通の
+      // 値を使うのではなく、実際に日付が重なり合っている「グループ」ごとに個別に決める。
+      // グループ分け（Union-Find）：日付が重なるカード同士（連鎖的に重なる場合も含む）を同じ束にする
+      const parent={};
+      const find=id=>{while(parent[id]!==id)id=parent[id]=parent[parent[id]];return id;};
+      const union=(a,b)=>{a=find(a);b=find(b);if(a!==b)parent[a]=b;};
+      laneCards.forEach(c=>{parent[c.id]=c.id;});
+      for(let i=0;i<laneCards.length;i++)for(let j=i+1;j<laneCards.length;j++){
+        const a=laneCards[i],b=laneCards[j];
+        if(!(a.end<b.start||a.start>b.end))union(a.id,b.id);
+      }
+      const groupMaxSub={};
+      laneCards.forEach(c=>{const g=find(c.id);groupMaxSub[g]=Math.max(groupMaxSub[g]||0,subOf[c.id]);});
+      const localKOf={};
+      laneCards.forEach(c=>{localKOf[c.id]=Math.max(1,(groupMaxSub[find(c.id)]||0)+1);});
       laneCards.forEach(card=>{
         const cardSub=subOf[card.id];
+        const K=localKOf[card.id];
         const s=Math.max(0,daysBetween(start,card.start));
         const e=Math.min(col.days.length-1,daysBetween(start,card.end));
         const top=s*H, height=(e-s+1)*H-3;
@@ -2484,39 +2500,48 @@ function paintMonthCols(host,cols,ctx){
         attachLaneResizer(rz,li,lanes);
       });
     });
-    if(bufOffset)initSlideMonthScroll(host);
+    if(bufOffset)initSlideMonthScroll(host,cols,bufOffset);
   }
 }
-// 2026-08-27：CSSのscroll-snapは使わず、ネイティブのトラックパッドスクロールをそのまま活かす。
-// バッファ列（前後2ヶ月ぶん）の端まで完全にスクロールし切って、かつスクロールが完全に止まって
-// から（＝トラックパッドの慣性が収まってから）だけ、anchorを1ヶ月ずらして再描画し、同じ見た目の
-// 位置へ静かにscrollLeftを戻す。慣性が残っているうちにDOMを差し替えるとブラウザの慣性スクロールが
-// 新しいDOMに対して働き続けてしまい、「ブルッと戻る／ズレる」といった見た目のバグの原因になって
-// いたため、必ず慣性が収まりきってから初めて処理する方式に変更した。
-// 2026-08-28：バッファを2ヶ月ぶんに増やし、月をまたぐたびに毎回DOM再構築が走らないようにして
-// スライド操作の体感のカクつきを減らした。
-function initSlideMonthScroll(host){
-  const cols=[...host.querySelectorAll('.monthcol')];
+// 2026-08-28：「毎回作り直す」のがカクつきの根本原因だったため、方針を変更。
+// 前後6ヶ月（＝実質1年分）をあらかじめ全部DOMに描いておき、スクロール中はDOM再構築を一切せず、
+// ネイティブスクロールにまかせたまま「今何月〜何月が見えているか」のラベル表示だけを
+// requestAnimationFrameで軽量に追従させる（重い処理は一切しない）。実際にその1年分の端まで
+// スクロールし切った時だけ、初めてその位置を中心とした新しい1年分を作り直す（スクロールが
+// 止まってから）。通常の利用では端に到達すること自体まれなので、体感上はほぼ常に「作り直しなし」
+// でヌルヌル動く。
+function initSlideMonthScroll(host,cols,bufOffset){
   if(cols.length<2)return;
-  const bufN=cols.filter(c=>c.dataset.buf==='1').length/2||1;
-  const step=cols[1].getBoundingClientRect().left-cols[0].getBoundingClientRect().left;
+  const els=[...host.querySelectorAll('.monthcol')];
+  if(els.length<2)return;
+  const step=els[1].getBoundingClientRect().left-els[0].getBoundingClientRect().left;
   if(!step||step<=0)return;
-  host.scrollLeft=step*bufN; // バッファ分だけ右にずらし、本来の3ヶ月がちょうど画面いっぱいに来るようにする
-  let idleT=null,busy=false;
+  host.scrollLeft=step*bufOffset; // 本来の3ヶ月がちょうど画面いっぱいに来る位置から開始
+  let ticking=false,idleT=null,busy=false,saveT=null;
   host.onscroll=()=>{
     if(busy)return;
+    if(!ticking){
+      ticking=true;
+      requestAnimationFrame(()=>{
+        ticking=false;
+        // 今スクロールで中心に来ている月のインデックスから、ラベルだけを軽量に更新する（DOM再構築なし）
+        const idx=Math.max(0,Math.min(cols.length-3,Math.round(host.scrollLeft/step)));
+        const rangeEl=$('#calRange');
+        if(rangeEl)rangeEl.textContent=`${cols[idx].title} 〜 ${cols[idx+2].title}`;
+        const newAnchorIso=iso(new Date(cols[idx].y,cols[idx].m,1));
+        if(state.ui.anchor!==newAnchorIso){
+          state.ui.anchor=newAnchorIso;
+          clearTimeout(saveT);saveT=setTimeout(save,500); // 保存は軽く間引く
+        }
+      });
+    }
+    // 1年分のバッファの端まで完全にスクロールし切って、かつ慣性が収まってから初めて作り直す
     clearTimeout(idleT);
-    // スクロールイベントが一定時間止まる＝慣性スクロールが完全に収まった、とみなす
     idleT=setTimeout(()=>{
       if(busy)return;
       const max=host.scrollWidth-host.clientWidth;
-      let dir=0;
-      if(host.scrollLeft<=1)dir=-1;
-      else if(host.scrollLeft>=max-1)dir=1;
-      if(dir!==0){
+      if(host.scrollLeft<=1||host.scrollLeft>=max-1){
         busy=true;
-        const a=parseISO(state.ui.anchor);a.setMonth(a.getMonth()+dir);
-        state.ui.anchor=iso(new Date(a.getFullYear(),a.getMonth(),1));
         save();renderCalendar();
         if(gTokenValid())gFetchForCurrentView();
         busy=false;
@@ -2524,9 +2549,6 @@ function initSlideMonthScroll(host){
     },140);
   };
 }
-// 2026-08-27：トラックパッド横スクロール＋マグネットスナップ機能は、環境によって残像・ブレなど
-// 挙動が不安定になるため廃止した。3ヶ月表示は常に実際の3ヶ月だけを固定グリッドで表示し、
-// 前後月への移動は画面上部の「‹ ›」ボタン（calStep）のみで行う。
 function attachLaneResizer(rz,idx,lanesList){
   rz.addEventListener('pointerdown',ev=>{
     ev.preventDefault();ev.stopPropagation();
@@ -3293,17 +3315,33 @@ function buildCalRenderCtx(){
 // これにより印刷結果は常に画面のどちらかの表示モードと画素単位で同じ密度になり、最終的に用紙へ
 // 収める際は（exportRangePDF側の）画像全体の縮小のみで調整するため、文字サイズの比率が崩れない。
 // 2026-08-28修正：画面側に「モニター幅に応じて行高・文字サイズを自動で少し拡大する」sizeTier機能を
-// 追加した際、印刷側にはこの拡大を反映していなかったため、幅の広いモニターで見るほど「画面はゆったり
-// 大きく表示されるのに印刷は昔のまま小さい」という乖離が生まれ、狭い印刷カード内でテキストが折り返し
-// →fitCardText()が高さを伸ばして次の日を押しつぶす、という不具合の原因になっていた。
-// 印刷時も必ず「今その瞬間の画面と同じsizeTier」で密度を合わせることで、画面通りの見た目に揃える。
-function rowHeightForLayout(monthsPerRow){
+// 追加した際、印刷側にはこの拡大を反映していなかったため密度が画面とズレる不具合が出た。
+// 一度は「印刷にも画面と同じsizeTier()（ウィンドウ幅基準）を使う」形で直したが、印刷の実際の
+// 列幅は用紙サイズで決まり、ブラウザのウィンドウ幅とは無関係なため、依然として実際の列幅と
+// 選ばれる密度がズレることがあった（＝画面では1行に収まる文字が印刷では2行になり、
+// fitCardText()の高さ自動調整で次の日を押しつぶす）。そこで「ウィンドウ幅」ではなく
+// 「実際にレンダリングされる列の横幅（px）」から直接、密度を決めるように変更した。
+function tierForColWidth(w){
+  if(w>=430)return 'lg';
+  if(w>=340)return 'md';
+  return 'sm';
+}
+// 画面用：現在実際に描画されているカレンダー列の横幅から密度を決める（まだ列が無ければ簡易推定）
+function sizeTier(){
+  const host=document.getElementById('calMonths');
+  const w=(host&&host.clientWidth)?host.clientWidth/3:(window.innerWidth-232-92)/3;
+  return tierForColWidth(w);
+}
+// 印刷用：用紙の実際の利用可能幅(availWpx)から直接、密度を決める（ウィンドウ幅には一切依存しない）
+function rowHeightForLayout(monthsPerRow,availWpx){
   const base=monthsPerRow<=1?30:22;
-  const scale={sm:1,md:1.12,lg:1.25}[sizeTier()]||1;
+  const tier=availWpx!=null?tierForColWidth(availWpx/Math.max(1,monthsPerRow)):sizeTier();
+  const scale={sm:1,md:1.12,lg:1.25}[tier]||1;
   return Math.round(base*scale);
 }
-function printHostClass(monthsPerRow){
-  return (monthsPerRow<=1?'months':'months g-3month')+' tier-'+sizeTier();
+function printHostClass(monthsPerRow,availWpx){
+  const tier=availWpx!=null?tierForColWidth(availWpx/Math.max(1,monthsPerRow)):sizeTier();
+  return (monthsPerRow<=1?'months':'months g-3month')+' tier-'+tier;
 }
 // months: [{y,m},...] の全リストを、monthsPerRow×rowsPerPage で「ページ→行→月」に分割する
 function paginateMonths(months,monthsPerRow,rowsPerPage){
@@ -3332,7 +3370,7 @@ function buildPrintPageEl(rowsOfMonths,ctx,opts){
   document.body.appendChild(wrap); // ← カードを組み立てる前に必ず接続する
   wrap.appendChild(buildPrintHeadEl(opts.title,pageRangeLabel(rowsOfMonths)));
   rowsOfMonths.forEach(rowYMs=>{
-    const rowHost=document.createElement('div');rowHost.className=printHostClass(opts.monthsPerRow);
+    const rowHost=document.createElement('div');rowHost.className=printHostClass(opts.monthsPerRow,opts.availWpx);
     wrap.appendChild(rowHost); // ← paintMonthColsを呼ぶ前に接続する（rowHost自体も接続済みでないとfitCardTextの測定が壊れる）
     const cols=rowYMs.map(ym=>monthCol(ym.y,ym.m));
     paintMonthCols(rowHost,cols,{bufOffset:0,allowed:ctx.allowed,lanes:ctx.lanes,laneW:ctx.laneW,laneCum:ctx.laneCum,H:opts.H,dlByDate:ctx.dlByDate,showSummary:opts.showSummary,interactive:false});
@@ -3353,7 +3391,7 @@ async function exportRangePDF(pagesMonths,cfg){
   const {availW}=paperPx(cfg.paper);
   const orientation=p.w>=p.h?'l':'p';
   const ctx=buildCalRenderCtx();
-  const H=rowHeightForLayout(cfg.monthsPerRow);
+  const H=rowHeightForLayout(cfg.monthsPerRow,availW);
   const showSummary=true;
   const { jsPDF }=window.jspdf;
   const doc=new jsPDF({orientation,unit:'mm',format:[p.w,p.h]});
@@ -3483,7 +3521,7 @@ function openPrintModal(){
       const pages=paginateMonths(months,monthsPerRow,rowsPerPage);
       const ctx=buildCalRenderCtx();
       const {availW}=paperPx(paper);
-      const H=rowHeightForLayout(monthsPerRow);
+      const H=rowHeightForLayout(monthsPerRow,availW);
       const showSummary=true;
       const urls=[];
       for(let i=0;i<pages.length;i++){
