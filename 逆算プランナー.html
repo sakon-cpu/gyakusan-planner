@@ -672,11 +672,13 @@ input,select,textarea{font-family:inherit;font-size:14px}
 /* calendar canvas */
 .calwrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;overflow:auto}
 .months{display:flex;gap:16px;align-items:flex-start}
-/* 3ヶ月表示：横スクロール・マグネットは使わず、常に3ヶ月ぶんが画面幅いっぱいに収まる固定グリッド
-   （2026-08-27：残像・ブレの原因になっていたトラックパッド横スクロール＋スナップは廃止し、
-   前後月への移動は「‹ ›」ボタンのみで行う仕様に変更） */
-.months.g-3month{overflow-x:visible}
-.months.g-3month .monthcol{flex:1 1 0}
+/* 3ヶ月表示：トラックパッドでのスライドは残しつつ、scroll-snap（CSSのマグネット機能）は使わない。
+   以前はscroll-snap-type:mandatoryとJSでのscrollLeft操作が競合して残像・ブレの原因になっていた
+   （2026-08-27）。スナップに頼らず素直にネイティブスクロールさせ、前後バッファ列の端まで
+   スクロールし切ったタイミングだけJS側で静かに1ヶ月分ずらす（＝実質シームレスな無限スクロール）。 */
+.months.g-3month{overflow-x:auto;scrollbar-width:none}
+.months.g-3month::-webkit-scrollbar{display:none}
+.months.g-3month .monthcol{flex:0 0 calc((100% - 32px)/3)}
 .monthcol{flex:1 1 0;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
 .monthcol .mhead{background:#f0f2f7;padding:8px 10px;font-weight:800;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--cal-line-strong)}
 .monthcol .mhead .mo{color:var(--sub);font-weight:600;font-size:11px}
@@ -2326,8 +2328,16 @@ function renderCalendar(){
   const durBtn=$('#calDurToggle');
   if(durBtn)durBtn.classList.toggle('on',state.ui.showDurWM!==false);
   let cols=granColumns();
-  // 2026-08-27：横スクロール＋マグネットのバッファ列方式は廃止。常に実際の3ヶ月だけを描画する。
-  const bufOffset=0;
+  // 3ヶ月表示：トラックパッドでスライドできるよう前後に1ヶ月ずつ見えないバッファ列を足す
+  // （印刷時は data-buf="1" の列をCSSで非表示にして3ヶ月だけ出す）。CSSのscroll-snapは使わず、
+  // バッファの端までスクロールし切った瞬間だけJSで静かに1ヶ月ずらす（2026-08-27）。
+  let bufOffset=0;
+  if(state.ui.gran==='3month'&&!READONLY){
+    const a=parseISO(state.ui.anchor);
+    const beforeM=new Date(a.getFullYear(),a.getMonth()-1,1), afterM=new Date(a.getFullYear(),a.getMonth()+3,1);
+    cols=[monthCol(beforeM.getFullYear(),beforeM.getMonth()),...cols,monthCol(afterM.getFullYear(),afterM.getMonth())];
+    bufOffset=1;
+  }
   const label=state.ui.gran==='3month'?`${cols[bufOffset].title} 〜 ${cols[bufOffset+2].title}`:(cols[0].title);
   $('#calRange').textContent=label;
   const host=$('#calMonths');host.className='months g-'+state.ui.gran+' tier-'+sizeTier();host.innerHTML='';
@@ -2469,7 +2479,40 @@ function paintMonthCols(host,cols,ctx){
         attachLaneResizer(rz,li,lanes);
       });
     });
+    if(bufOffset)initSlideMonthScroll(host);
   }
+}
+// 2026-08-27：CSSのscroll-snapは使わず、ネイティブのトラックパッドスクロールをそのまま活かす。
+// バッファ列（前後1ヶ月ぶん）の端まで完全にスクロールし切った瞬間だけ、anchorを1ヶ月ずらして
+// 再描画し、同じ見た目の位置へ静かにscrollLeftを戻す（＝実質シームレスに無限スクロールできる）。
+// snapのアニメーションと衝突しないため、以前の「残像・ブレ」が起きない。
+function initSlideMonthScroll(host){
+  const cols=[...host.querySelectorAll('.monthcol')];
+  if(cols.length<2)return;
+  const step=cols[1].getBoundingClientRect().left-cols[0].getBoundingClientRect().left;
+  if(!step||step<=0)return;
+  host.scrollLeft=step; // バッファ1列ぶん右にずらし、本来の3ヶ月がちょうど画面いっぱいに来るようにする
+  let ticking=false,busy=false;
+  host.onscroll=()=>{
+    if(busy||ticking)return;
+    ticking=true;
+    requestAnimationFrame(()=>{
+      ticking=false;
+      if(busy)return;
+      const max=host.scrollWidth-host.clientWidth;
+      let dir=0;
+      if(host.scrollLeft<=1)dir=-1;
+      else if(host.scrollLeft>=max-1)dir=1;
+      if(dir!==0){
+        busy=true;
+        const a=parseISO(state.ui.anchor);a.setMonth(a.getMonth()+dir);
+        state.ui.anchor=iso(new Date(a.getFullYear(),a.getMonth(),1));
+        save();renderCalendar();
+        if(gTokenValid())gFetchForCurrentView();
+        busy=false;
+      }
+    });
+  };
 }
 // 2026-08-27：トラックパッド横スクロール＋マグネットスナップ機能は、環境によって残像・ブレなど
 // 挙動が不安定になるため廃止した。3ヶ月表示は常に実際の3ヶ月だけを固定グリッドで表示し、
