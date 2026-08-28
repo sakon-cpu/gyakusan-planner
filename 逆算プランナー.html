@@ -2328,15 +2328,20 @@ function renderCalendar(){
   const durBtn=$('#calDurToggle');
   if(durBtn)durBtn.classList.toggle('on',state.ui.showDurWM!==false);
   let cols=granColumns();
-  // 3ヶ月表示：トラックパッドでスライドできるよう前後に1ヶ月ずつ見えないバッファ列を足す
+  // 3ヶ月表示：トラックパッドでスライドできるよう前後に2ヶ月ずつ見えないバッファ列を足す
   // （印刷時は data-buf="1" の列をCSSで非表示にして3ヶ月だけ出す）。CSSのscroll-snapは使わず、
   // バッファの端までスクロールし切った瞬間だけJSで静かに1ヶ月ずらす（2026-08-27）。
+  // バッファを2ヶ月ぶんに広げているのは、月をまたぐたびに毎回DOM再構築が走ると体感がカクつくため、
+  // 少し多めに余裕を持たせて再構築の頻度そのものを減らすため（2026-08-28）。
+  const BUF=2;
   let bufOffset=0;
   if(state.ui.gran==='3month'&&!READONLY){
     const a=parseISO(state.ui.anchor);
-    const beforeM=new Date(a.getFullYear(),a.getMonth()-1,1), afterM=new Date(a.getFullYear(),a.getMonth()+3,1);
-    cols=[monthCol(beforeM.getFullYear(),beforeM.getMonth()),...cols,monthCol(afterM.getFullYear(),afterM.getMonth())];
-    bufOffset=1;
+    const before=[],after=[];
+    for(let i=BUF;i>=1;i--){const d=new Date(a.getFullYear(),a.getMonth()-i,1);before.push(monthCol(d.getFullYear(),d.getMonth()));}
+    for(let i=0;i<BUF;i++){const d=new Date(a.getFullYear(),a.getMonth()+3+i,1);after.push(monthCol(d.getFullYear(),d.getMonth()));}
+    cols=[...before,...cols,...after];
+    bufOffset=BUF;
   }
   const label=state.ui.gran==='3month'?`${cols[bufOffset].title} 〜 ${cols[bufOffset+2].title}`:(cols[0].title);
   $('#calRange').textContent=label;
@@ -2362,7 +2367,7 @@ function paintMonthCols(host,cols,ctx){
   const {bufOffset=0,allowed,lanes,laneW,laneCum,H,dlByDate,showSummary,interactive}=ctx;
   cols.forEach((col,colIdx)=>{
     const mc=document.createElement('div');mc.className='monthcol';
-    if(bufOffset&&(colIdx===0||colIdx===cols.length-1))mc.dataset.buf='1';
+    if(bufOffset&&(colIdx<bufOffset||colIdx>=cols.length-bufOffset))mc.dataset.buf='1';
     // レーン見出し(.lh)の%幅は、行側の.lanecellsと同じく「日付欄(gut)を除いた残り幅」を基準に計算する必要がある。
     // .lanehdr自体（gut込みの全幅）を基準にしてしまうと、gutの分だけ見出しが実際のマス目より広くなり、境界線がずれる原因になっていた。
     let laneHdr=`<div class="lanehdr"><div class="gut"></div><div class="lanehdrcells">`+lanes.map((l,li)=>`<div class="lh ${l.kind==='client'?'client':''}" style="flex:0 0 ${laneW[li]}%">${esc(laneDisplayName(l))}${l.kind==='client'?' <span style="font-size:9px;opacity:.7">〔破線枠〕</span>':''}</div>`).join('')+`</div></div>`;
@@ -2483,17 +2488,20 @@ function paintMonthCols(host,cols,ctx){
   }
 }
 // 2026-08-27：CSSのscroll-snapは使わず、ネイティブのトラックパッドスクロールをそのまま活かす。
-// バッファ列（前後1ヶ月ぶん）の端まで完全にスクロールし切って、かつスクロールが完全に止まって
+// バッファ列（前後2ヶ月ぶん）の端まで完全にスクロールし切って、かつスクロールが完全に止まって
 // から（＝トラックパッドの慣性が収まってから）だけ、anchorを1ヶ月ずらして再描画し、同じ見た目の
 // 位置へ静かにscrollLeftを戻す。慣性が残っているうちにDOMを差し替えるとブラウザの慣性スクロールが
 // 新しいDOMに対して働き続けてしまい、「ブルッと戻る／ズレる」といった見た目のバグの原因になって
 // いたため、必ず慣性が収まりきってから初めて処理する方式に変更した。
+// 2026-08-28：バッファを2ヶ月ぶんに増やし、月をまたぐたびに毎回DOM再構築が走らないようにして
+// スライド操作の体感のカクつきを減らした。
 function initSlideMonthScroll(host){
   const cols=[...host.querySelectorAll('.monthcol')];
   if(cols.length<2)return;
+  const bufN=cols.filter(c=>c.dataset.buf==='1').length/2||1;
   const step=cols[1].getBoundingClientRect().left-cols[0].getBoundingClientRect().left;
   if(!step||step<=0)return;
-  host.scrollLeft=step; // バッファ1列ぶん右にずらし、本来の3ヶ月がちょうど画面いっぱいに来るようにする
+  host.scrollLeft=step*bufN; // バッファ分だけ右にずらし、本来の3ヶ月がちょうど画面いっぱいに来るようにする
   let idleT=null,busy=false;
   host.onscroll=()=>{
     if(busy)return;
@@ -3284,11 +3292,18 @@ function buildCalRenderCtx(){
 // 狭いパディング）、1ヶ月のみ（＝画面の「1ヶ月」表示と同じ密度）ならH=30・通常フォントで固定する。
 // これにより印刷結果は常に画面のどちらかの表示モードと画素単位で同じ密度になり、最終的に用紙へ
 // 収める際は（exportRangePDF側の）画像全体の縮小のみで調整するため、文字サイズの比率が崩れない。
+// 2026-08-28修正：画面側に「モニター幅に応じて行高・文字サイズを自動で少し拡大する」sizeTier機能を
+// 追加した際、印刷側にはこの拡大を反映していなかったため、幅の広いモニターで見るほど「画面はゆったり
+// 大きく表示されるのに印刷は昔のまま小さい」という乖離が生まれ、狭い印刷カード内でテキストが折り返し
+// →fitCardText()が高さを伸ばして次の日を押しつぶす、という不具合の原因になっていた。
+// 印刷時も必ず「今その瞬間の画面と同じsizeTier」で密度を合わせることで、画面通りの見た目に揃える。
 function rowHeightForLayout(monthsPerRow){
-  return monthsPerRow<=1?30:22;
+  const base=monthsPerRow<=1?30:22;
+  const scale={sm:1,md:1.12,lg:1.25}[sizeTier()]||1;
+  return Math.round(base*scale);
 }
 function printHostClass(monthsPerRow){
-  return monthsPerRow<=1?'months':'months g-3month';
+  return (monthsPerRow<=1?'months':'months g-3month')+' tier-'+sizeTier();
 }
 // months: [{y,m},...] の全リストを、monthsPerRow×rowsPerPage で「ページ→行→月」に分割する
 function paginateMonths(months,monthsPerRow,rowsPerPage){
