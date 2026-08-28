@@ -676,7 +676,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
    以前はscroll-snap-type:mandatoryとJSでのscrollLeft操作が競合して残像・ブレの原因になっていた
    （2026-08-27）。スナップに頼らず素直にネイティブスクロールさせ、前後バッファ列の端まで
    スクロールし切ったタイミングだけJS側で静かに1ヶ月分ずらす（＝実質シームレスな無限スクロール）。 */
-.months.g-3month{overflow-x:auto;scrollbar-width:none}
+.months.g-3month{overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none}
 .months.g-3month::-webkit-scrollbar{display:none}
 .months.g-3month .monthcol{flex:0 0 calc((100% - 32px)/3)}
 .monthcol{flex:1 1 0;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
@@ -2483,21 +2483,23 @@ function paintMonthCols(host,cols,ctx){
   }
 }
 // 2026-08-27：CSSのscroll-snapは使わず、ネイティブのトラックパッドスクロールをそのまま活かす。
-// バッファ列（前後1ヶ月ぶん）の端まで完全にスクロールし切った瞬間だけ、anchorを1ヶ月ずらして
-// 再描画し、同じ見た目の位置へ静かにscrollLeftを戻す（＝実質シームレスに無限スクロールできる）。
-// snapのアニメーションと衝突しないため、以前の「残像・ブレ」が起きない。
+// バッファ列（前後1ヶ月ぶん）の端まで完全にスクロールし切って、かつスクロールが完全に止まって
+// から（＝トラックパッドの慣性が収まってから）だけ、anchorを1ヶ月ずらして再描画し、同じ見た目の
+// 位置へ静かにscrollLeftを戻す。慣性が残っているうちにDOMを差し替えるとブラウザの慣性スクロールが
+// 新しいDOMに対して働き続けてしまい、「ブルッと戻る／ズレる」といった見た目のバグの原因になって
+// いたため、必ず慣性が収まりきってから初めて処理する方式に変更した。
 function initSlideMonthScroll(host){
   const cols=[...host.querySelectorAll('.monthcol')];
   if(cols.length<2)return;
   const step=cols[1].getBoundingClientRect().left-cols[0].getBoundingClientRect().left;
   if(!step||step<=0)return;
   host.scrollLeft=step; // バッファ1列ぶん右にずらし、本来の3ヶ月がちょうど画面いっぱいに来るようにする
-  let ticking=false,busy=false;
+  let idleT=null,busy=false;
   host.onscroll=()=>{
-    if(busy||ticking)return;
-    ticking=true;
-    requestAnimationFrame(()=>{
-      ticking=false;
+    if(busy)return;
+    clearTimeout(idleT);
+    // スクロールイベントが一定時間止まる＝慣性スクロールが完全に収まった、とみなす
+    idleT=setTimeout(()=>{
       if(busy)return;
       const max=host.scrollWidth-host.clientWidth;
       let dir=0;
@@ -2511,7 +2513,7 @@ function initSlideMonthScroll(host){
         if(gTokenValid())gFetchForCurrentView();
         busy=false;
       }
-    });
+    },140);
   };
 }
 // 2026-08-27：トラックパッド横スクロール＋マグネットスナップ機能は、環境によって残像・ブレなど
