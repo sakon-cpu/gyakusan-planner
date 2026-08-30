@@ -672,14 +672,14 @@ input,select,textarea{font-family:inherit;font-size:14px}
 /* calendar canvas */
 .calwrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;overflow:auto}
 .months{display:flex;gap:16px;align-items:flex-start}
-/* 3ヶ月表示：トラックパッドでのスライドは残しつつ、scroll-snap（CSSのマグネット機能）は使わない。
-   以前はscroll-snap-type:mandatoryとJSでのscrollLeft操作が競合して残像・ブレの原因になっていた
-   （2026-08-27）。スナップに頼らず素直にネイティブスクロールさせ、前後バッファ列の端まで
-   スクロールし切ったタイミングだけJS側で静かに1ヶ月分ずらす（＝実質シームレスな無限スクロール）。 */
-.months.g-3month{overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none}
+/* 3ヶ月表示：トラックパッドでのスライドは素直なネイティブ横スクロール。scroll-snap（マグネット）は
+   一切使わない。前後に多めのバッファ月を先読みしておき、スクロール中はDOMを作り直さない。
+   各月列に content-visibility:auto を付け、画面外の月はブラウザが描画自体をスキップするため、
+   1年分を先読みしても描画コストが軽く、スクロールがカクつかない（2026-08-29 全面見直し）。 */
+.months.g-3month{overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .months.g-3month::-webkit-scrollbar{display:none}
-.months.g-3month .monthcol{flex:0 0 calc((100% - 32px)/3)}
-.monthcol{flex:1 1 0;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
+.months.g-3month .monthcol{flex:0 0 calc((100% - 32px)/3);content-visibility:auto;contain-intrinsic-size:auto 760px}
+.monthcol{flex:1 1 0;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;contain:layout paint style}
 .monthcol .mhead{background:#f0f2f7;padding:8px 10px;font-weight:800;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--cal-line-strong)}
 .monthcol .mhead .mo{color:var(--sub);font-weight:600;font-size:11px}
 .lanehdr{display:flex;border-bottom:1px solid var(--cal-line-strong);background:#fafbfe}
@@ -753,18 +753,19 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dragghost .lbl{font-size:11px;line-height:1.15}
 .dragghost .sm{font-size:9.5px;opacity:.9}
 .dragghost.client{background:#fff5f5!important;color:#c2383c;border:2px dashed rgba(229,72,77,.8)}
-/* dense views: shrink label so short (single-day) cards never clip text */
-.months.g-3month .calcard{padding:2px 5px}
-.months.g-3month .calcard .lbl{font-size:9.5px;line-height:1.1}
-.months.g-3month .calcard .sm{font-size:8.5px;line-height:1.05}
-.months.g-1month .calcard .lbl{font-size:11px;line-height:1.15}
-/* 画面幅に応じた表示密度（sizeTier）：横幅に余裕がある場合はカード文字を少し大きくして間延びを防ぐ */
-.months.g-3month.tier-md .calcard{padding:3px 6px}
-.months.g-3month.tier-md .calcard .lbl{font-size:10.5px}
-.months.g-3month.tier-md .calcard .sm{font-size:9.5px}
-.months.g-3month.tier-lg .calcard{padding:4px 7px}
-.months.g-3month.tier-lg .calcard .lbl{font-size:12px}
-.months.g-3month.tier-lg .calcard .sm{font-size:10.5px}
+/* 表示サイズはユーザーが任意に変えられる（カレンダーツールバーの拡大/縮小）。--cal-fs（フォント倍率）を
+   .months に掛けて、行の高さ(JS側のrowHeight)と一緒に連動させる。印刷時も画面と全く同じ--cal-fsと
+   列幅を使うことで、印刷結果を画面と画素比まで一致させる（2026-08-29 全面見直し）。 */
+/* dense views: shrink label so short (single-day) cards never clip text。--cal-fs はホスト(#calMonths)や
+   印刷ラッパー(.printPage)に直接セットする。未設定時は 1（＝従来サイズ）にフォールバック。 */
+.months.g-3month .calcard{padding:calc(2px*var(--cal-fs,1)) calc(5px*var(--cal-fs,1))}
+.months.g-3month .calcard .lbl{font-size:calc(9.5px*var(--cal-fs,1));line-height:1.1}
+.months.g-3month .calcard .sm{font-size:calc(8.5px*var(--cal-fs,1));line-height:1.05}
+.months.g-1month .calcard .lbl{font-size:calc(11px*var(--cal-fs,1));line-height:1.15}
+.months.g-3month .dayrow .dnum{font-size:calc(13px*var(--cal-fs,1))}
+.months.g-3month .dayrow .dwk{font-size:calc(10px*var(--cal-fs,1))}
+.months.g-3month .lanehdr .lh{font-size:calc(11px*var(--cal-fs,1))}
+.months.g-3month .monthcol .mhead{font-size:calc(13px*var(--cal-fs,1))}
 /* dense 3-month: keep the date gutter to a single clean line (holiday still shown by red number) */
 .months.g-3month .dayrow .holname{display:none}
 .dayrow .gut{overflow:hidden;flex-wrap:nowrap}
@@ -1027,6 +1028,7 @@ body.shared #main{padding-top:34px}
         <div class="filterchips" id="calFilters"></div>
         <button class="btn sm" id="calDurToggle">📏 日数表示</button>
         <button class="btn sm" id="calGridToggle">▦ 罫線:薄い</button>
+        <div class="pp-stepper" id="calZoom" title="表示サイズ（モニターに合わせて調整）"><button data-d="-1" title="縮小">−</button><span id="calZoomV">100%</span><button data-d="1" title="拡大">＋</button></div>
         <div class="lanetools" id="laneTools"></div>
       </div>
       <div class="unschedTray" id="unschedTray">
@@ -1266,6 +1268,7 @@ function migrate(){
   if(state.ui&&state.ui.printShowDuration==null)state.ui.printShowDuration=true;
   if(state.ui&&state.ui.printDarkness==null)state.ui.printDarkness='light';
   if(state.ui&&state.ui.showDurWM==null)state.ui.showDurWM=true;
+  if(state.ui&&state.ui.calScale==null)state.ui.calScale=1;
   (state.lanes||[]).forEach(l=>{if(!l.kind)l.kind=(l.name&&(l.name.includes('先方')||l.name.includes('貴社')||/client/i.test(l.name)))?'client':'self';});
   (state.projects||[]).forEach(p=>{if(p.client==null)p.client='';});
   if(state.ui&&state.ui.pinnedH==null)state.ui.pinnedH=220;
@@ -2284,20 +2287,19 @@ function laneOptionLabel(l,pid){
   }
   return l.name;
 }
-// 画面幅（＝モニターの解像度）に応じて3段階（フルHD相当/中間/4K相当）で表示密度を自動調整する。
-// 2026-08-27追加：フルHDでは今まで通りコンパクトに、4Kなど横幅に余裕がある環境では行の高さと
-// カード内フォントを少し大きくして、余白ばかり広がって間延びして見えるのを防ぐ。
-function sizeTier(){
-  const w=window.innerWidth||1280;
-  if(w>=2400)return 'lg'; // 4K相当
-  if(w>=1700)return 'md'; // 中間・フルHDでウィンドウ最大化時など
-  return 'sm'; // フルHD以下・ウィンドウが狭い場合
+// 表示サイズ（ズーム）はユーザーが任意に変えられる（カレンダーツールバーの − / ＋ ボタン）。
+// state.ui.calScale が倍率（1.0=標準）。モニターの解像度に応じて自由に大きく／小さくできる。
+// この1つの倍率を、行の高さ(rowHeight)・フォント倍率(CSS変数--cal-fs)・印刷の三方すべてで共有する
+// ことで、「画面で見えている見た目」と「印刷結果」を常に一致させる（2026-08-29 全面見直し）。
+const CAL_SCALE_MIN=0.7, CAL_SCALE_MAX=2.0, CAL_SCALE_STEP=0.1;
+function calScale(){
+  const s=(state.ui&&+state.ui.calScale)||1;
+  return Math.max(CAL_SCALE_MIN,Math.min(CAL_SCALE_MAX,s||1));
 }
 function rowHeight(){
   const g=state.ui.gran;
   const base={'3month':22,'1month':30,'2week':56,'1week':84,'1day':60}[g]||24;
-  const scale={sm:1,md:1.12,lg:1.25}[sizeTier()];
-  return Math.round(base*scale);
+  return Math.round(base*calScale());
 }
 // カレンダーの罫線の濃さ（3段階）。CSS変数（--cal-line/--cal-line-strong）を書き換えるだけの実装のため、
 // 画面表示だけでなくPDF出力（html2canvasによるオフスクリーンDOMのラスタライズ）にも自動的に反映される
@@ -2325,6 +2327,7 @@ function renderCalendar(){
   renderCalFilters();renderLaneTools();
   if(!READONLY)renderUnscheduled();
   applyGridDarkness();
+  const zv=$('#calZoomV');if(zv)zv.textContent=Math.round(calScale()*100)+'%';
   const durBtn=$('#calDurToggle');
   if(durBtn)durBtn.classList.toggle('on',state.ui.showDurWM!==false);
   let cols=granColumns();
@@ -2345,7 +2348,7 @@ function renderCalendar(){
   }
   const label=state.ui.gran==='3month'?`${cols[bufOffset].title} 〜 ${cols[bufOffset+2].title}`:(cols[0].title);
   $('#calRange').textContent=label;
-  const host=$('#calMonths');host.className='months g-'+state.ui.gran+' tier-'+sizeTier();host.innerHTML='';
+  const host=$('#calMonths');host.className='months g-'+state.ui.gran;host.style.setProperty('--cal-fs',calScale());host.innerHTML='';
   $$('#granSwitch button').forEach(b=>b.classList.toggle('on',b.dataset.g===state.ui.gran));
   if(state.ui.gran==='1day'){renderDayView(host,cols[0]);return;}
   const lanes=visibleLanes();
@@ -2517,36 +2520,31 @@ function initSlideMonthScroll(host,cols,bufOffset){
   const step=els[1].getBoundingClientRect().left-els[0].getBoundingClientRect().left;
   if(!step||step<=0)return;
   host.scrollLeft=step*bufOffset; // 本来の3ヶ月がちょうど画面いっぱいに来る位置から開始
-  let ticking=false,idleT=null,busy=false,saveT=null;
+  const rangeEl=$('#calRange');
+  let raf=false,idleT=null,busy=false;
+  const centerIdx=()=>Math.max(0,Math.min(cols.length-3,Math.round(host.scrollLeft/step)));
   host.onscroll=()=>{
     if(busy)return;
-    if(!ticking){
-      ticking=true;
-      requestAnimationFrame(()=>{
-        ticking=false;
-        // 今スクロールで中心に来ている月のインデックスから、ラベルだけを軽量に更新する（DOM再構築なし）
-        const idx=Math.max(0,Math.min(cols.length-3,Math.round(host.scrollLeft/step)));
-        const rangeEl=$('#calRange');
-        if(rangeEl)rangeEl.textContent=`${cols[idx].title} 〜 ${cols[idx+2].title}`;
-        const newAnchorIso=iso(new Date(cols[idx].y,cols[idx].m,1));
-        if(state.ui.anchor!==newAnchorIso){
-          state.ui.anchor=newAnchorIso;
-          clearTimeout(saveT);saveT=setTimeout(save,500); // 保存は軽く間引く
-        }
-      });
-    }
-    // 1年分のバッファの端まで完全にスクロールし切って、かつ慣性が収まってから初めて作り直す
+    // スクロール中に走らせる処理は「見えている月のラベル更新」だけ（1フレーム1回・DOM再構築なし＝軽い）
+    if(!raf){raf=true;requestAnimationFrame(()=>{
+      raf=false;
+      const idx=centerIdx();
+      if(rangeEl)rangeEl.textContent=`${cols[idx].title} 〜 ${cols[idx+2].title}`;
+    });}
+    // スクロールが止まってから（慣性が収まってから）だけ状態を確定する。
+    // ・端まで到達した時：その位置を中心に新しい範囲を作り直す（＝先へ／前へ無限にスクロールできる）
+    // ・途中で止まった時：作り直さず、表示中の先頭月をanchorとして記憶するだけ（次回もその位置で開く）
     clearTimeout(idleT);
     idleT=setTimeout(()=>{
       if(busy)return;
       const max=host.scrollWidth-host.clientWidth;
+      const idx=centerIdx();
+      const leftmost=cols[idx];
+      state.ui.anchor=iso(new Date(leftmost.y,leftmost.m,1));
       if(host.scrollLeft<=1||host.scrollLeft>=max-1){
-        busy=true;
-        save();renderCalendar();
-        if(gTokenValid())gFetchForCurrentView();
-        busy=false;
-      }
-    },140);
+        busy=true;save();renderCalendar();if(gTokenValid())gFetchForCurrentView();busy=false;
+      }else{ save(); }
+    },160);
   };
 }
 function attachLaneResizer(rz,idx,lanesList){
@@ -3305,43 +3303,29 @@ function buildCalRenderCtx(){
   const laneCum=[];{let acc=0;laneW.forEach(w=>{laneCum.push(acc);acc+=w;});}
   return {lanes,allowed,dlByDate,laneW,laneCum};
 }
-// ★方針（2026-08-14修正）：印刷/PDFの日付行の高さ・フォント密度は「画面上のカレンダー表示と
-// 完全に一致させる」ことを最優先にする。以前は用紙の余白を減らすために段数やページ内訳に応じて
-// Hを13〜40pxの間で連続的に調整していたが、これだとページ設定によって「カード幅とフォントサイズの
-// 比率」が変わってしまい、fitCardText()による自動縮小の掛かり具合がページごとにバラバラになって
-// 「文字が大きくなったり小さくなったりする」「一部だけ文字が切れる」不具合の原因になっていた。
-// 1ページの月数が2以上（＝画面の「3ヶ月」表示と同じ密度）ならH=22＋`g-3month`クラス（小さめフォント・
-// 狭いパディング）、1ヶ月のみ（＝画面の「1ヶ月」表示と同じ密度）ならH=30・通常フォントで固定する。
-// これにより印刷結果は常に画面のどちらかの表示モードと画素単位で同じ密度になり、最終的に用紙へ
-// 収める際は（exportRangePDF側の）画像全体の縮小のみで調整するため、文字サイズの比率が崩れない。
-// 2026-08-28修正：画面側に「モニター幅に応じて行高・文字サイズを自動で少し拡大する」sizeTier機能を
-// 追加した際、印刷側にはこの拡大を反映していなかったため密度が画面とズレる不具合が出た。
-// 一度は「印刷にも画面と同じsizeTier()（ウィンドウ幅基準）を使う」形で直したが、印刷の実際の
-// 列幅は用紙サイズで決まり、ブラウザのウィンドウ幅とは無関係なため、依然として実際の列幅と
-// 選ばれる密度がズレることがあった（＝画面では1行に収まる文字が印刷では2行になり、
-// fitCardText()の高さ自動調整で次の日を押しつぶす）。そこで「ウィンドウ幅」ではなく
-// 「実際にレンダリングされる列の横幅（px）」から直接、密度を決めるように変更した。
-function tierForColWidth(w){
-  if(w>=430)return 'lg';
-  if(w>=340)return 'md';
-  return 'sm';
-}
-// 画面用：現在実際に描画されているカレンダー列の横幅から密度を決める（まだ列が無ければ簡易推定）
-function sizeTier(){
+// ★方針（2026-08-29 全面見直し）：印刷/PDFを「画面表示と画素比まで完全に一致」させるため、
+// 印刷用DOMを “画面と同じ1列あたりの横幅・同じ行高(H)・同じフォント倍率(--cal-fs)” で組み立てる。
+// これにより、カード内テキストの折り返し位置も、fitCardText()による自動縮小の掛かり具合も、
+// 画面と寸分たがわず同じ結果になる（＝画面で1行のものは印刷でも必ず1行）。最終的にPDFへ収める際は
+// exportRangePDF側で「ラスタライズした画像全体を用紙幅に合わせて拡大／縮小」するだけなので、
+// 縦横比は保たれ、密度のズレが原理的に起こらない。
+// 画面で実際に描画されている3ヶ月表示の1列の横幅(px)。無ければホスト幅から算出、それも無ければ推定。
+function screenColWidthPx(){
   const host=document.getElementById('calMonths');
-  const w=(host&&host.clientWidth)?host.clientWidth/3:(window.innerWidth-232-92)/3;
-  return tierForColWidth(w);
+  if(host){
+    const mc=host.querySelector('.monthcol:not([data-buf="1"])')||host.querySelector('.monthcol');
+    if(mc){const w=mc.getBoundingClientRect().width;if(w>10)return w;}
+    if(host.clientWidth>10)return (host.clientWidth-32)/3;
+  }
+  return Math.max(220,(window.innerWidth-232-64)/3);
 }
-// 印刷用：用紙の実際の利用可能幅(availWpx)から直接、密度を決める（ウィンドウ幅には一切依存しない）
-function rowHeightForLayout(monthsPerRow,availWpx){
+// 印刷の行高：画面のカレンダーと同じ倍率(calScale)で決める。1ページ1ヶ月なら1ヶ月表示相当の密度。
+function rowHeightForLayout(monthsPerRow){
   const base=monthsPerRow<=1?30:22;
-  const tier=availWpx!=null?tierForColWidth(availWpx/Math.max(1,monthsPerRow)):sizeTier();
-  const scale={sm:1,md:1.12,lg:1.25}[tier]||1;
-  return Math.round(base*scale);
+  return Math.round(base*calScale());
 }
-function printHostClass(monthsPerRow,availWpx){
-  const tier=availWpx!=null?tierForColWidth(availWpx/Math.max(1,monthsPerRow)):sizeTier();
-  return (monthsPerRow<=1?'months':'months g-3month')+' tier-'+tier;
+function printHostClass(monthsPerRow){
+  return (monthsPerRow<=1?'months':'months g-3month');
 }
 // months: [{y,m},...] の全リストを、monthsPerRow×rowsPerPage で「ページ→行→月」に分割する
 function paginateMonths(months,monthsPerRow,rowsPerPage){
@@ -3361,19 +3345,29 @@ function pageRangeLabel(rows){
 // 「auto」＋最小高さに強制的に潰れてしまう（＝「作業期間が1日表示になる」不具合の直接の原因）。
 // そのため、必ず先にdocument.bodyへ接続してからカードを組み立てる（画面外へ配置して見た目には影響しない）。
 function buildPrintPageEl(rowsOfMonths,ctx,opts){
+  const mpr=Math.max(1,opts.monthsPerRow);
+  // 1列あたりの横幅：2ヶ月/ページ以上なら画面の3ヶ月表示と全く同じ列幅を使う（＝見た目が完全一致）。
+  // 1ヶ月/ページなら画面の1ヶ月表示相当として、3ヶ月表示の列幅の約3倍の広い列にする。
+  const scW=screenColWidthPx();
+  const GAP=16, PAD=8;
+  const colW=mpr<=1?(scW*3+GAP*2):scW;
+  const contentW=colW*mpr+GAP*(mpr-1);
   const wrap=document.createElement('div');
   wrap.className='printPage';
-  wrap.style.cssText='position:fixed;left:-99999px;top:0;background:#fff;padding:8px;box-sizing:border-box';
-  wrap.style.width=Math.round(opts.availWpx)+'px';
+  wrap.style.cssText='position:fixed;left:-99999px;top:0;background:#fff;padding:'+PAD+'px;box-sizing:border-box';
+  wrap.style.width=Math.round(contentW+PAD*2)+'px';
+  wrap.style.setProperty('--cal-fs',calScale()); // 画面と同じフォント倍率で組む
   wrap.classList.toggle('hidedurwm',opts.showDur===false);
   wrap.classList.add('lv-'+(['light','normal','dark'].includes(opts.darkness)?opts.darkness:'light'));
   document.body.appendChild(wrap); // ← カードを組み立てる前に必ず接続する
   wrap.appendChild(buildPrintHeadEl(opts.title,pageRangeLabel(rowsOfMonths)));
   rowsOfMonths.forEach(rowYMs=>{
-    const rowHost=document.createElement('div');rowHost.className=printHostClass(opts.monthsPerRow,opts.availWpx);
+    const rowHost=document.createElement('div');rowHost.className=printHostClass(opts.monthsPerRow);
     wrap.appendChild(rowHost); // ← paintMonthColsを呼ぶ前に接続する（rowHost自体も接続済みでないとfitCardTextの測定が壊れる）
     const cols=rowYMs.map(ym=>monthCol(ym.y,ym.m));
     paintMonthCols(rowHost,cols,{bufOffset:0,allowed:ctx.allowed,lanes:ctx.lanes,laneW:ctx.laneW,laneCum:ctx.laneCum,H:opts.H,dlByDate:ctx.dlByDate,showSummary:opts.showSummary,interactive:false});
+    // 各月列に「画面と同じ固定ピクセル幅」を明示的に与える（g-3monthの1/3幅指定を上書き）
+    rowHost.querySelectorAll('.monthcol').forEach(mc=>{mc.style.flex='0 0 '+colW+'px';mc.style.maxWidth=colW+'px';mc.style.contentVisibility='visible';});
   });
   return wrap;
 }
@@ -3950,16 +3944,16 @@ function wire(){
   attachReorder($('#todoRemind'),'remindOrder');
   attachReorder($('#todoDoneList'),'doneOrder');
   window.addEventListener('resize',()=>{if(current==='today')applyTodoLayout();});
-  // ウィンドウ幅（モニター解像度・ウィンドウのリサイズ／別モニターへの移動）に応じてカレンダーの
-  // 表示密度（sizeTier）を自動で切り替える。頻繁に発火するのでdebounceして再描画は最小限に留める。
-  let calResizeT=null;
+  // ウィンドウ／画面幅が変わると1列の横幅が変わり、カード内テキストの折り返し・自動縮小が変わるため、
+  // カレンダー表示中はdebounceして再描画し、常に今の幅に最適化された表示に保つ。
+  let calResizeT=null,lastCalW=0;
   window.addEventListener('resize',()=>{
     if(current!=='calendar')return;
     clearTimeout(calResizeT);
     calResizeT=setTimeout(()=>{
       const host=$('#calMonths');
-      if(host&&!host.className.includes('tier-'+sizeTier()))renderCalendar();
-    },200);
+      if(host&&host.clientWidth&&Math.abs(host.clientWidth-lastCalW)>8){lastCalW=host.clientWidth;renderCalendar();}
+    },220);
   });
   $$('#nav .navbtn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
   $('#navAddProj').onclick=()=>editProject(null);
@@ -3985,6 +3979,12 @@ function wire(){
   $('#calToday').onclick=()=>{const t=new Date();state.ui.anchor=iso(new Date(t.getFullYear(),t.getMonth(),1));state.ui.calDay=todayISO();save();renderCalendar();};
   $('#calDurToggle').onclick=()=>{state.ui.showDurWM=state.ui.showDurWM===false;save();renderCalendar();};
   $('#calGridToggle').onclick=cycleGridDarkness;
+  $('#calZoom').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    const cur=calScale();
+    let next=Math.round((cur+parseInt(b.dataset.d,10)*CAL_SCALE_STEP)*100)/100;
+    next=Math.max(CAL_SCALE_MIN,Math.min(CAL_SCALE_MAX,next));
+    state.ui.calScale=next;save();renderCalendar();
+  });
   $$('#granSwitch button').forEach(b=>b.onclick=()=>{state.ui.gran=b.dataset.g;save();renderCalendar();});
   // settings
   $('#setWorkStart').onchange=e=>{state.settings.workStart=e.target.value;save();generateSchedule();};
