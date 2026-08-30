@@ -673,12 +673,14 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .calwrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;overflow:auto}
 .months{display:flex;gap:16px;align-items:flex-start}
 /* 3ヶ月表示：トラックパッドでのスライドは素直なネイティブ横スクロール。scroll-snap（マグネット）は
-   一切使わない。前後に多めのバッファ月を先読みしておき、スクロール中はDOMを作り直さない。
-   各月列に content-visibility:auto を付け、画面外の月はブラウザが描画自体をスキップするため、
-   1年分を先読みしても描画コストが軽く、スクロールがカクつかない（2026-08-29 全面見直し）。 */
-.months.g-3month{overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+   一切使わない。前後にバッファ月を先読みしておき、スクロール中はJS/DOM再構築を一切走らせない
+   （スクロールが完全に止まってから初めて状態を確定する）。各月列を独立した描画レイヤーに切り出す
+   （contain + translateZ）ことで、横スクロール時に他の月を再描画せず、GPU合成でヌルヌル動く。
+   ※以前使っていた content-visibility:auto はSafari等で「スクロール中に列が一瞬空白になって
+   パッと現れる（カクつき・チラつき）」不具合が出たため廃止した（2026-08-31 全面見直し）。 */
+.months.g-3month{overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch;will-change:scroll-position}
 .months.g-3month::-webkit-scrollbar{display:none}
-.months.g-3month .monthcol{flex:0 0 calc((100% - 32px)/3);content-visibility:auto;contain-intrinsic-size:auto 760px}
+.months.g-3month .monthcol{flex:0 0 calc((100% - 32px)/3);transform:translateZ(0)}
 .monthcol{flex:1 1 0;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;contain:layout paint style}
 .monthcol .mhead{background:#f0f2f7;padding:8px 10px;font-weight:800;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--cal-line-strong)}
 .monthcol .mhead .mo{color:var(--sub);font-weight:600;font-size:11px}
@@ -2336,7 +2338,7 @@ function renderCalendar(){
   // 使わず、スクロール中はDOM再構築を一切せずラベル表示だけを軽量に追従させ、
   // 実際にバッファの端まで到達した時だけ改めて広い範囲を作り直す（2026-08-28：
   // 「1年分まとめて読み込んでおけば毎回作り直さずに済む」というアイデアを反映）。
-  const BUF=6; // 前後6ヶ月＝実質1年分をあらかじめ用意しておく
+  const BUF=3; // 前後3ヶ月ずつ先読み（計9ヶ月）。各月をGPUレイヤー化して合成スクロールするので軽い
   let bufOffset=0;
   if(state.ui.gran==='3month'&&!READONLY){
     const a=parseISO(state.ui.anchor);
@@ -2513,6 +2515,9 @@ function paintMonthCols(host,cols,ctx){
 // スクロールし切った時だけ、初めてその位置を中心とした新しい1年分を作り直す（スクロールが
 // 止まってから）。通常の利用では端に到達すること自体まれなので、体感上はほぼ常に「作り直しなし」
 // でヌルヌル動く。
+// ★スクロール中は一切JSを走らせない（ここが今回の肝）。トラックパッドの横スクロールは完全に
+// ブラウザのネイティブ合成に任せ、main threadでの処理をゼロにすることでカクつき／チラつきを根絶する。
+// ラベル更新・anchor記憶・端での再構築は、すべて「スクロールが完全に止まってから」まとめて行う。
 function initSlideMonthScroll(host,cols,bufOffset){
   if(cols.length<2)return;
   const els=[...host.querySelectorAll('.monthcol')];
@@ -2521,30 +2526,23 @@ function initSlideMonthScroll(host,cols,bufOffset){
   if(!step||step<=0)return;
   host.scrollLeft=step*bufOffset; // 本来の3ヶ月がちょうど画面いっぱいに来る位置から開始
   const rangeEl=$('#calRange');
-  let raf=false,idleT=null,busy=false;
-  const centerIdx=()=>Math.max(0,Math.min(cols.length-3,Math.round(host.scrollLeft/step)));
+  let idleT=null,busy=false;
   host.onscroll=()=>{
     if(busy)return;
-    // スクロール中に走らせる処理は「見えている月のラベル更新」だけ（1フレーム1回・DOM再構築なし＝軽い）
-    if(!raf){raf=true;requestAnimationFrame(()=>{
-      raf=false;
-      const idx=centerIdx();
-      if(rangeEl)rangeEl.textContent=`${cols[idx].title} 〜 ${cols[idx+2].title}`;
-    });}
-    // スクロールが止まってから（慣性が収まってから）だけ状態を確定する。
-    // ・端まで到達した時：その位置を中心に新しい範囲を作り直す（＝先へ／前へ無限にスクロールできる）
-    // ・途中で止まった時：作り直さず、表示中の先頭月をanchorとして記憶するだけ（次回もその位置で開く）
+    // スクロール中はタイマーを張り直すだけ（＝何もしない）。止まって初めて下の処理が動く。
     clearTimeout(idleT);
     idleT=setTimeout(()=>{
       if(busy)return;
       const max=host.scrollWidth-host.clientWidth;
-      const idx=centerIdx();
+      const idx=Math.max(0,Math.min(cols.length-3,Math.round(host.scrollLeft/step)));
       const leftmost=cols[idx];
+      if(rangeEl)rangeEl.textContent=`${cols[idx].title} 〜 ${cols[idx+2].title}`;
       state.ui.anchor=iso(new Date(leftmost.y,leftmost.m,1));
       if(host.scrollLeft<=1||host.scrollLeft>=max-1){
+        // 端まで来た＝これ以上バッファが無い時だけ、その位置を中心に作り直して先へ進めるようにする
         busy=true;save();renderCalendar();if(gTokenValid())gFetchForCurrentView();busy=false;
       }else{ save(); }
-    },160);
+    },150);
   };
 }
 function attachLaneResizer(rz,idx,lanesList){
@@ -3367,7 +3365,7 @@ function buildPrintPageEl(rowsOfMonths,ctx,opts){
     const cols=rowYMs.map(ym=>monthCol(ym.y,ym.m));
     paintMonthCols(rowHost,cols,{bufOffset:0,allowed:ctx.allowed,lanes:ctx.lanes,laneW:ctx.laneW,laneCum:ctx.laneCum,H:opts.H,dlByDate:ctx.dlByDate,showSummary:opts.showSummary,interactive:false});
     // 各月列に「画面と同じ固定ピクセル幅」を明示的に与える（g-3monthの1/3幅指定を上書き）
-    rowHost.querySelectorAll('.monthcol').forEach(mc=>{mc.style.flex='0 0 '+colW+'px';mc.style.maxWidth=colW+'px';mc.style.contentVisibility='visible';});
+    rowHost.querySelectorAll('.monthcol').forEach(mc=>{mc.style.flex='0 0 '+colW+'px';mc.style.maxWidth=colW+'px';mc.style.transform='none';});
   });
   return wrap;
 }
